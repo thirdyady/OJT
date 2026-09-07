@@ -176,7 +176,16 @@ function AuthPage() {
                   >
                     Sign up
                   </button>
-                </>
+                   <div className="mt-2">
+                    <button
+                      type="button"
+                      className="font-medium text-slate-900 hover:underline"
+                >
+                  Forgot password?
+                </button>
+                </div>
+              </>
+            
               ) : (
                 <>
                   Already have one?{" "}
