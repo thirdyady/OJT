@@ -15,6 +15,11 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+.local-test-accounts.json
+test-results/
+playwright-report/
+supabase/.temp/
+supabase/.branches/
 
 # Wrangler / Cloudflare
 .wrangler/
