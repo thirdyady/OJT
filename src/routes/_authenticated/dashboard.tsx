@@ -1,6 +1,8 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { calculateCompletedHoursFromRecords, calculateOjtProgress } from "@/lib/ojt-progress.mjs";
+import psaLogo from "../../../assets/psa-logo.webp";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -18,6 +20,10 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 type Punch = "check_in" | "break_out" | "break_in" | "check_out";
 
+function punchValue(field: Punch, value: string | null): Partial<Record<Punch, string | null>> {
+  return { [field]: value };
+}
+
 type DtrRow = {
   id?: string;
   user_id?: string;
@@ -32,6 +38,8 @@ type Profile = {
   full_name: string | null;
   student_id: string | null;
   company: string | null;
+  ojt_title: string | null;
+  required_ojt_hours: number | null;
   is_admin?: boolean;
 };
 
@@ -40,6 +48,8 @@ type TraineeRow = {
   full_name: string | null;
   student_id: string | null;
   company: string | null;
+  ojt_title: string | null;
+  required_ojt_hours: number | null;
 };
 
 const ORDER: Punch[] = ["check_in", "break_out", "break_in", "check_out"];
@@ -51,8 +61,18 @@ const LABELS: Record<Punch, string> = {
 };
 
 const MONTHS = [
-  "January","February","March","April","May","June",
-  "July","August","September","October","November","December",
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
 ];
 
 function todayKey() {
@@ -83,10 +103,7 @@ function computeHours(r: DtrRow) {
   const co = new Date(r.check_out).getTime();
   let breakMs = 0;
   if (r.break_out && r.break_in) {
-    breakMs = Math.max(
-      0,
-      new Date(r.break_in).getTime() - new Date(r.break_out).getTime(),
-    );
+    breakMs = Math.max(0, new Date(r.break_in).getTime() - new Date(r.break_out).getTime());
   }
   return Math.max(0, co - ci - breakMs) / 3_600_000;
 }
@@ -115,13 +132,34 @@ function filterRowsByMonth<T extends DtrRow>(
   });
 }
 
-const EMPTY_PROFILE: Profile = { full_name: "", student_id: "", company: "", is_admin: false };
+const EMPTY_PROFILE: Profile = {
+  full_name: "",
+  student_id: "",
+  company: "",
+  ojt_title: "",
+  required_ojt_hours: null,
+  is_admin: false,
+};
+
+function missingProfileFields(profile: Profile): string[] {
+  const missing: string[] = [];
+  if (!profile.full_name?.trim()) missing.push("Full Name");
+  if (!profile.student_id?.trim()) missing.push("Student ID");
+  if (!profile.company?.trim()) missing.push("Host Company");
+  if (!profile.ojt_title?.trim()) missing.push("OJT Title");
+  return missing;
+}
 
 // ── Shared DTR document builder ─────────────────────────────────────────────
 // Pulled out as standalone functions (not tied to component state) so both
 // the trainee's own dashboard AND the admin's per-trainee view can generate
 // the same printable/downloadable DTR document.
-function buildDtrHtmlFor(fullName: string, rows: DtrRow[], targetMonth: number, targetYear: number) {
+function buildDtrHtmlFor(
+  fullName: string,
+  rows: DtrRow[],
+  targetMonth: number,
+  targetYear: number,
+) {
   const byDay: Record<number, DtrRow> = {};
   for (const r of rows) {
     const d = new Date(r.entry_date + "T00:00:00");
@@ -141,9 +179,9 @@ function buildDtrHtmlFor(fullName: string, rows: DtrRow[], targetMonth: number, 
     const row = day <= daysInMonth ? byDay[day] : null;
     const weekend = day <= daysInMonth && isWeekend(day);
     const color = weekend ? "#cc0000" : "#000000";
-    const amIn  = row ? hhmm(row.check_in)  : "";
+    const amIn = row ? hhmm(row.check_in) : "";
     const amOut = row ? hhmm(row.break_out) : "";
-    const pmIn  = row ? hhmm(row.break_in)  : "";
+    const pmIn = row ? hhmm(row.break_in) : "";
     const pmOut = row ? hhmm(row.check_out) : "";
     rows31.push(`
       <tr>
@@ -255,7 +293,12 @@ function printDtrFor(fullName: string, rows: DtrRow[], targetMonth: number, targ
   };
 }
 
-function downloadWordDtrFor(fullName: string, rows: DtrRow[], targetMonth: number, targetYear: number) {
+function downloadWordDtrFor(
+  fullName: string,
+  rows: DtrRow[],
+  targetMonth: number,
+  targetYear: number,
+) {
   const monthLabel = `${MONTHS[targetMonth]} ${targetYear}`;
 
   const byDay: Record<number, DtrRow> = {};
@@ -492,8 +535,16 @@ function DashboardPage() {
   const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
   const [profileDirty, setProfileDirty] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [targetInput, setTargetInput] = useState("");
+  const [savingTarget, setSavingTarget] = useState(false);
+  const [targetError, setTargetError] = useState("");
   const [now, setNow] = useState(new Date());
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [savingAttendance, setSavingAttendance] = useState(false);
+  const attendanceLock = useRef(false);
+  const profileLock = useRef(false);
 
   // Month/year the user wants to view/download the DTR for. This now also
   // drives which rows are shown in the table below (see visibleRows).
@@ -507,29 +558,45 @@ function DashboardPage() {
 
   useEffect(() => {
     (async () => {
-      const { data: u } = await supabase.auth.getUser();
-      if (!u.user) return;
-      setUserId(u.user.id);
-      setEmail(u.user.email ?? "");
+      try {
+        const { data: u } = await supabase.auth.getUser();
+        if (!u.user) {
+          navigate({ to: "/auth" });
+          return;
+        }
+        setUserId(u.user.id);
+        setEmail(u.user.email ?? "");
 
-      const [{ data: p }, { data: entries }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("full_name, student_id, company, is_admin")
-          .eq("id", u.user.id)
-          .maybeSingle(),
-        supabase
-          .from("dtr_entries")
-          .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
-          .eq("user_id", u.user.id)
-          .order("entry_date", { ascending: false }),
-      ]);
+        const [profileResult, entriesResult] = await Promise.all([
+          supabase.from("profiles").select("*").eq("id", u.user.id).maybeSingle(),
+          supabase
+            .from("dtr_entries")
+            .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
+            .eq("user_id", u.user.id)
+            .order("entry_date", { ascending: false }),
+        ]);
 
-      if (p) setProfile({ ...EMPTY_PROFILE, ...p });
-      setRows((entries as DtrRow[] | null) ?? []);
-      setLoading(false);
+        if (profileResult.error) throw profileResult.error;
+        if (entriesResult.error) throw entriesResult.error;
+        if (profileResult.data) {
+          const loadedProfile = { ...EMPTY_PROFILE, ...profileResult.data };
+          setProfile(loadedProfile);
+          setTargetInput(
+            loadedProfile.required_ojt_hours == null
+              ? ""
+              : String(loadedProfile.required_ojt_hours),
+          );
+        }
+        setRows((entriesResult.data as DtrRow[] | null) ?? []);
+      } catch (error) {
+        setLoadError(
+          error instanceof Error ? error.message : "Unable to load your records. Please try again.",
+        );
+      } finally {
+        setLoading(false);
+      }
     })();
-  }, []);
+  }, [navigate]);
 
   const key = todayKey();
   const today: DtrRow = useMemo(
@@ -554,65 +621,159 @@ function DashboardPage() {
   }, [today]);
 
   const punch = async (p: Punch) => {
-    if (!userId) return;
-
-    const nowIso = new Date().toISOString();
-    const updated: DtrRow = { ...today, [p]: nowIso, user_id: userId };
-    setRows((prev) => {
-      const other = prev.filter((r) => r.entry_date !== key);
-      return [updated, ...other];
-    });
-    const { data, error } = await supabase
-      .from("dtr_entries")
-      .upsert(
-        {
+    if (!userId || attendanceLock.current || p !== nextPunch) return;
+    attendanceLock.current = true;
+    setSavingAttendance(true);
+    setActionError("");
+    try {
+      const nowIso = new Date().toISOString();
+      // Compare the current timestamps before writing so another tab cannot
+      // silently overwrite an already-saved punch.
+      let query = today.id
+        ? supabase
+            .from("dtr_entries")
+            .update(punchValue(p, nowIso))
+            .eq("id", today.id)
+            .eq("user_id", userId)
+        : null;
+      if (query)
+        for (const field of ORDER) {
+          query = today[field] ? query.eq(field, today[field]!) : query.is(field, null);
+        }
+      const { data, error } = await (
+        query ??
+        supabase.from("dtr_entries").insert({
           user_id: userId,
           entry_date: key,
-          [p]: nowIso,
-          ...(today.id ? { id: today.id } : {}),
-        },
-        { onConflict: "user_id,entry_date" },
+          ...punchValue(p, nowIso),
+        })
       )
-      .select()
-      .single();
-    if (!error && data) {
-      setRows((prev) => {
-        const other = prev.filter((r) => r.entry_date !== key);
-        return [data as DtrRow, ...other];
-      });
+        .select()
+        .single();
+      if (error)
+        throw new Error(
+          `Attendance was not saved. ${error.message} Refresh your records before retrying.`,
+        );
+      if (data) {
+        setRows((prev) => {
+          const other = prev.filter((r) => r.entry_date !== key);
+          return [data as DtrRow, ...other];
+        });
+      }
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Attendance was not saved. Check your connection and try again.",
+      );
+    } finally {
+      attendanceLock.current = false;
+      setSavingAttendance(false);
     }
   };
 
   const undoLast = async () => {
-    if (!userId || !today.id) return;
+    if (!userId || !today.id || attendanceLock.current) return;
     const filled = ORDER.filter((p) => today[p]);
     const last = filled[filled.length - 1];
     if (!last) return;
-    const updated = { ...today, [last]: null };
-    setRows((prev) =>
-      prev.map((r) => (r.entry_date === key ? (updated as DtrRow) : r)),
-    );
-    await supabase
-      .from("dtr_entries")
-      .update({ [last]: null } as never)
-      .eq("id", today.id);
+    if (!window.confirm(`Undo ${LABELS[last]} at ${fmtTime(today[last])} for today?`)) return;
+    attendanceLock.current = true;
+    setSavingAttendance(true);
+    setActionError("");
+    try {
+      let query = supabase
+        .from("dtr_entries")
+        .update(punchValue(last, null))
+        .eq("id", today.id)
+        .eq("user_id", userId);
+      for (const field of ORDER)
+        query = today[field] ? query.eq(field, today[field]!) : query.is(field, null);
+      const { data, error } = await query.select().single();
+      if (error)
+        throw new Error(
+          `Undo was not saved. ${error.message} Refresh your records before retrying.`,
+        );
+      setRows((prev) => prev.map((r) => (r.id === data.id ? data : r)));
+    } catch (error) {
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Undo was not saved. Check your connection and try again.",
+      );
+    } finally {
+      attendanceLock.current = false;
+      setSavingAttendance(false);
+    }
   };
 
   const saveProfile = async () => {
-    if (!userId) return;
+    if (!userId || profileLock.current) return;
+    const missing = missingProfileFields(profile);
+    if (missing.length > 0) {
+      setActionError(`Please complete the required trainee details: ${missing.join(", ")}.`);
+      return;
+    }
+    profileLock.current = true;
     setSavingProfile(true);
-    await supabase.from("profiles").upsert({
-      id: userId,
-      full_name: profile.full_name,
-      student_id: profile.student_id,
-      company: profile.company,
-    });
-    setSavingProfile(false);
-    setProfileDirty(false);
+    setActionError("");
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .upsert({
+          id: userId,
+          full_name: profile.full_name,
+          student_id: profile.student_id,
+          company: profile.company,
+          ojt_title: profile.ojt_title,
+        })
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      setProfileDirty(false);
+    } catch (error) {
+      setActionError(
+        error instanceof Error ? error.message : "Profile was not saved. Please try again.",
+      );
+    } finally {
+      profileLock.current = false;
+      setSavingProfile(false);
+    }
+  };
+
+  const saveTarget = async () => {
+    if (!userId || savingTarget) return;
+    const value = targetInput.trim();
+    const target = value === "" ? null : Number(value);
+    if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
+      setTargetError("Enter a required OJT target between 0 and 10,000 hours.");
+      return;
+    }
+
+    setSavingTarget(true);
+    setTargetError("");
+    const { data, error } = await supabase
+      .from("profiles")
+      .update({ required_ojt_hours: target })
+      .eq("id", userId)
+      .select("required_ojt_hours")
+      .single();
+    if (error) {
+      setTargetError(`Target was not saved. ${error.message}`);
+    } else {
+      const savedTarget = data.required_ojt_hours;
+      setProfile((current) => ({ ...current, required_ojt_hours: savedTarget }));
+      setTargetInput(savedTarget == null ? "" : String(savedTarget));
+    }
+    setSavingTarget(false);
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      setActionError(error.message);
+      return;
+    }
     navigate({ to: "/auth" });
   };
 
@@ -663,6 +824,17 @@ function DashboardPage() {
     [visibleRows],
   );
 
+  const completedOjtHours = useMemo(() => calculateCompletedHoursFromRecords(rows), [rows]);
+  const ojtProgress = useMemo(
+    () =>
+      profile.required_ojt_hours == null
+        ? null
+        : calculateOjtProgress(profile.required_ojt_hours, completedOjtHours),
+    [profile.required_ojt_hours, completedOjtHours],
+  );
+  const targetDirty =
+    targetInput !== (profile.required_ojt_hours == null ? "" : String(profile.required_ojt_hours));
+
   // Build a list of years available for selection, based on existing rows
   // (plus the current year), so the dropdown always has something sensible.
   const availableYears = useMemo(() => {
@@ -679,18 +851,25 @@ function DashboardPage() {
     <div className="min-h-screen bg-slate-50">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-5xl flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-5">
-          <div>
-            <h1 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
-              OJT Attendance · {profile.is_admin ? "Admin" : "DTR"}
-            </h1>
-            <p className="text-xs text-slate-500">
-              Signed in as {profile.full_name || email}
-              {profile.is_admin && (
-                <span className="ml-2 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
-                  Admin
-                </span>
-              )}
-            </p>
+          <div className="flex items-center gap-3">
+            <img
+              src={psaLogo}
+              alt="Philippine Statistics Authority"
+              className="h-10 w-10 shrink-0 rounded-full object-contain sm:h-12 sm:w-12"
+            />
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
+                OJT Attendance · {profile.is_admin ? "Admin" : "DTR"}
+              </h1>
+              <p className="text-xs text-slate-500">
+                Signed in as {profile.full_name || email}
+                {profile.is_admin && (
+                  <span className="ml-2 rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white">
+                    Admin
+                  </span>
+                )}
+              </p>
+            </div>
           </div>
           <div className="flex items-center justify-between gap-4 sm:justify-end">
             <div className="text-left sm:text-right">
@@ -710,6 +889,9 @@ function DashboardPage() {
                 })}
               </div>
             </div>
+            <Link to="/reset-password" className="text-xs font-medium text-slate-600 underline">
+              Change password
+            </Link>
             <button
               onClick={signOut}
               className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
@@ -721,9 +903,24 @@ function DashboardPage() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-4 px-3 py-5 sm:space-y-6 sm:px-6 sm:py-8">
+        {actionError && (
+          <p
+            role="alert"
+            className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
+          >
+            {actionError}
+          </p>
+        )}
         {loading ? (
           <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
             Loading…
+          </div>
+        ) : loadError ? (
+          <div role="alert" className="rounded border border-red-200 bg-white p-5 text-red-700">
+            <p>{loadError}</p>
+            <button className="mt-2 underline" onClick={() => window.location.reload()}>
+              Reload records
+            </button>
           </div>
         ) : profile.is_admin ? (
           <AdminDashboard />
@@ -732,9 +929,7 @@ function DashboardPage() {
             {/* Profile */}
             <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">
-                  Trainee details
-                </h2>
+                <h2 className="text-sm font-semibold text-slate-900">Trainee details</h2>
                 {profileDirty && (
                   <button
                     onClick={saveProfile}
@@ -745,9 +940,23 @@ function DashboardPage() {
                   </button>
                 )}
               </div>
-              <div className="grid gap-3 sm:grid-cols-3">
+              {missingProfileFields(profile).length > 0 && (
+                <p
+                  role="status"
+                  className="mb-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
+                >
+                  Complete your required trainee details ({missingProfileFields(profile).join(", ")}
+                  ) to keep your profile information up to date. Your existing attendance records
+                  remain available.
+                </p>
+              )}
+              <fieldset
+                disabled={savingProfile}
+                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+              >
                 <ProfileField
                   label="Full Name"
+                  required
                   value={profile.full_name ?? ""}
                   onChange={(v) => {
                     setProfile({ ...profile, full_name: v });
@@ -757,6 +966,7 @@ function DashboardPage() {
                 />
                 <ProfileField
                   label="Student ID"
+                  required
                   value={profile.student_id ?? ""}
                   onChange={(v) => {
                     setProfile({ ...profile, student_id: v });
@@ -766,6 +976,7 @@ function DashboardPage() {
                 />
                 <ProfileField
                   label="Host Company"
+                  required
                   value={profile.company ?? ""}
                   onChange={(v) => {
                     setProfile({ ...profile, company: v });
@@ -773,7 +984,132 @@ function DashboardPage() {
                   }}
                   placeholder="Acme Corp."
                 />
+                <ProfileField
+                  label="OJT Title"
+                  required
+                  value={profile.ojt_title ?? ""}
+                  onChange={(v) => {
+                    setProfile({ ...profile, ojt_title: v });
+                    setProfileDirty(true);
+                  }}
+                  placeholder="Data Analyst Intern"
+                />
+              </fieldset>
+            </section>
+
+            {/* OJT progress */}
+            <section
+              aria-labelledby="ojt-progress-heading"
+              className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+            >
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 id="ojt-progress-heading" className="text-sm font-semibold text-slate-900">
+                    OJT progress
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Completed hours use every complete DTR day in your account.
+                  </p>
+                </div>
+                <div className="flex items-end gap-2">
+                  <label className="block">
+                    <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Required hours
+                    </span>
+                    <input
+                      type="number"
+                      min="0.01"
+                      max="10000"
+                      step="0.25"
+                      aria-label="Required OJT hours"
+                      value={targetInput}
+                      onChange={(e) => {
+                        setTargetInput(e.target.value);
+                        setTargetError("");
+                      }}
+                      placeholder="486"
+                      className="mt-1 w-28 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                    />
+                  </label>
+                  {targetDirty && (
+                    <button
+                      onClick={saveTarget}
+                      disabled={savingTarget}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {savingTarget ? "Saving…" : "Save target"}
+                    </button>
+                  )}
+                </div>
               </div>
+
+              {targetError && (
+                <p
+                  role="alert"
+                  className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+                >
+                  {targetError}
+                </p>
+              )}
+
+              {ojtProgress ? (
+                <>
+                  <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <ProgressStat
+                      label="Required"
+                      value={`${ojtProgress.requiredHours.toFixed(2)} hrs`}
+                    />
+                    <ProgressStat
+                      label="Completed"
+                      value={`${ojtProgress.completedHours.toFixed(2)} hrs`}
+                    />
+                    <ProgressStat
+                      label="Remaining"
+                      value={`${ojtProgress.remainingHours.toFixed(2)} hrs`}
+                    />
+                    <ProgressStat
+                      label="Complete"
+                      value={`${ojtProgress.completionPercentage.toFixed(1)}%`}
+                    />
+                  </div>
+                  <div className="mt-4">
+                    <div
+                      role="progressbar"
+                      aria-label="OJT completion"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.min(100, ojtProgress.completionPercentage)}
+                      className="h-3 overflow-hidden rounded-full bg-slate-100"
+                    >
+                      <div
+                        className={`h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none ${
+                          ojtProgress.isComplete
+                            ? "bg-emerald-500 motion-safe:animate-pulse"
+                            : "bg-slate-900"
+                        }`}
+                        style={{
+                          width: `${Math.min(100, Math.max(0, ojtProgress.completionPercentage))}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                  {ojtProgress.isComplete && (
+                    <p
+                      aria-live="polite"
+                      className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 motion-safe:animate-pulse"
+                    >
+                      <span aria-hidden="true">✦ </span>
+                      OJT target reached!
+                      {ojtProgress.overageHours > 0 &&
+                        ` ${ojtProgress.overageHours.toFixed(2)} hours beyond your target.`}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="mt-5 rounded-md bg-slate-50 px-3 py-3 text-sm text-slate-600">
+                  Set your required OJT hours to start tracking your completion progress.
+                </p>
+              )}
             </section>
 
             {/* Punch card */}
@@ -784,6 +1120,7 @@ function DashboardPage() {
                 </h2>
                 <button
                   onClick={undoLast}
+                  disabled={savingAttendance || !today.id || !ORDER.some((p) => today[p])}
                   className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
                   Undo last
@@ -820,9 +1157,10 @@ function DashboardPage() {
                 {nextPunch ? (
                   <button
                     onClick={() => punch(nextPunch)}
+                    disabled={savingAttendance}
                     className="w-full rounded-md bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:py-2.5"
                   >
-                    {LABELS[nextPunch]} now
+                    {savingAttendance ? "Saving…" : `${LABELS[nextPunch]} now`}
                   </button>
                 ) : (
                   <div className="rounded-md bg-emerald-100 px-4 py-2 text-sm font-medium text-emerald-800">
@@ -830,7 +1168,8 @@ function DashboardPage() {
                   </div>
                 )}
                 <span className="text-xs text-slate-500">
-                  Tap each button yourself — Break Out, Break In, and Check Out are no longer logged automatically.
+                  Tap each button yourself — Break Out, Break In, and Check Out are no longer logged
+                  automatically.
                 </span>
               </div>
             </section>
@@ -839,13 +1178,10 @@ function DashboardPage() {
             <section className="rounded-xl border border-slate-200 bg-white">
               <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-900">
-                    Daily Time Record
-                  </h2>
+                  <h2 className="text-sm font-semibold text-slate-900">Daily Time Record</h2>
                   <p className="text-xs text-slate-500">
-                    {MONTHS[downloadMonth]} {downloadYear} · Total logged:{" "}
-                    {totalHours.toFixed(2)} hrs across {visibleRows.length}{" "}
-                    day{visibleRows.length === 1 ? "" : "s"}
+                    {MONTHS[downloadMonth]} {downloadYear} · Total logged: {totalHours.toFixed(2)}{" "}
+                    hrs across {visibleRows.length} day{visibleRows.length === 1 ? "" : "s"}
                   </p>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
@@ -953,10 +1289,7 @@ function DashboardPage() {
                   <tbody className="divide-y divide-slate-100">
                     {visibleRows.length === 0 && (
                       <tr>
-                        <td
-                          colSpan={6}
-                          className="px-5 py-10 text-center text-sm text-slate-400"
-                        >
+                        <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-400">
                           No records for {MONTHS[downloadMonth]} {downloadYear}.
                         </td>
                       </tr>
@@ -968,18 +1301,10 @@ function DashboardPage() {
                           <td className="px-5 py-3 font-medium text-slate-900">
                             {fmtDate(r.entry_date)}
                           </td>
-                          <td className="px-5 py-3 font-mono">
-                            {fmtTime(r.check_in)}
-                          </td>
-                          <td className="px-5 py-3 font-mono">
-                            {fmtTime(r.break_out)}
-                          </td>
-                          <td className="px-5 py-3 font-mono">
-                            {fmtTime(r.break_in)}
-                          </td>
-                          <td className="px-5 py-3 font-mono">
-                            {fmtTime(r.check_out)}
-                          </td>
+                          <td className="px-5 py-3 font-mono">{fmtTime(r.check_in)}</td>
+                          <td className="px-5 py-3 font-mono">{fmtTime(r.break_out)}</td>
+                          <td className="px-5 py-3 font-mono">{fmtTime(r.break_in)}</td>
+                          <td className="px-5 py-3 font-mono">{fmtTime(r.check_out)}</td>
                           <td className="px-5 py-3 text-right font-mono">
                             {h ? h.toFixed(2) : "—"}
                           </td>
@@ -999,11 +1324,13 @@ function DashboardPage() {
 
 function ProfileField({
   label,
+  required = false,
   value,
   onChange,
   placeholder,
 }: {
   label: string;
+  required?: boolean;
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
@@ -1012,8 +1339,15 @@ function ProfileField({
     <label className="block">
       <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
         {label}
+        {required && (
+          <span className="ml-1 text-red-500" aria-hidden="true">
+            *
+          </span>
+        )}
       </span>
       <input
+        required={required}
+        aria-label={label}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
@@ -1032,7 +1366,19 @@ function ProfileField({
 
 type TraineeDtr = DtrRow & { user_id: string };
 
+function ProgressStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
+    </div>
+  );
+}
+
 function AdminDashboard() {
+  const mutationLock = useRef(false);
+  const requestVersion = useRef(0);
+  const [mutating, setMutating] = useState(false);
   const [trainees, setTrainees] = useState<TraineeRow[]>([]);
   const [loadingTrainees, setLoadingTrainees] = useState(true);
   const [traineeError, setTraineeError] = useState<string | null>(null);
@@ -1048,12 +1394,15 @@ function AdminDashboard() {
   // trainee. This now also drives which rows are shown in the table below.
   const [docMonth, setDocMonth] = useState<number>(new Date().getMonth());
   const [docYear, setDocYear] = useState<number>(new Date().getFullYear());
+  const [requiredHoursInput, setRequiredHoursInput] = useState("");
+  const [savingRequiredHours, setSavingRequiredHours] = useState(false);
+  const [requiredHoursError, setRequiredHoursError] = useState("");
 
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, full_name, student_id, company")
+        .select("id, full_name, student_id, company, ojt_title, required_ojt_hours")
         .order("full_name", { ascending: true });
       if (error) {
         setTraineeError(error.message);
@@ -1065,7 +1414,9 @@ function AdminDashboard() {
   }, []);
 
   const loadEntries = async (userId: string) => {
+    const version = ++requestVersion.current;
     setSelectedId(userId);
+    setEntries([]);
     setLoadingEntries(true);
     setEntriesError(null);
     const { data, error } = await supabase
@@ -1073,6 +1424,7 @@ function AdminDashboard() {
       .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
       .eq("user_id", userId)
       .order("entry_date", { ascending: false });
+    if (version !== requestVersion.current) return;
     if (error) {
       setEntriesError(error.message);
       setEntries([]);
@@ -1083,36 +1435,103 @@ function AdminDashboard() {
   };
 
   const deleteEntry = async (entryId: string) => {
+    if (mutationLock.current) return;
     if (!window.confirm("Delete this DTR entry? This cannot be undone.")) return;
-    const { error } = await supabase.from("dtr_entries").delete().eq("id", entryId);
-    if (!error) {
+    mutationLock.current = true;
+    setMutating(true);
+    try {
+      const { error } = await supabase
+        .from("dtr_entries")
+        .delete()
+        .eq("id", entryId)
+        .select("id")
+        .single();
+      if (error) throw new Error(error.message);
       setEntries((prev) => prev.filter((e) => e.id !== entryId));
-    } else {
-      window.alert(`Failed to delete: ${error.message}`);
+    } catch (error) {
+      window.alert(
+        `Failed to delete: ${error instanceof Error ? error.message : "Check your connection and retry."}`,
+      );
+    } finally {
+      mutationLock.current = false;
+      setMutating(false);
     }
   };
 
   const clearPunch = async (entryId: string, field: Punch) => {
-    const { error } = await supabase
-      .from("dtr_entries")
-      .update({ [field]: null } as never)
-      .eq("id", entryId);
-    if (!error) {
-      setEntries((prev) =>
-        prev.map((e) => (e.id === entryId ? { ...e, [field]: null } : e)),
+    if (mutationLock.current) return;
+    const entry = entries.find((r) => r.id === entryId);
+    if (!entry?.[field]) return;
+    if (
+      !window.confirm(`Clear ${LABELS[field]} at ${fmtTime(entry[field])} on ${entry.entry_date}?`)
+    )
+      return;
+    mutationLock.current = true;
+    setMutating(true);
+    try {
+      const { data, error } = await supabase
+        .from("dtr_entries")
+        .update(punchValue(field, null))
+        .eq("id", entryId)
+        .eq(field, entry[field]!)
+        .select()
+        .single();
+      if (error) throw new Error(error.message);
+      setEntries((prev) => prev.map((e) => (e.id === entryId ? data : e)));
+    } catch (error) {
+      window.alert(
+        `Failed to update: ${error instanceof Error ? error.message : "Check your connection and retry."}`,
       );
-    } else {
-      window.alert(`Failed to update: ${error.message}`);
+    } finally {
+      mutationLock.current = false;
+      setMutating(false);
     }
   };
 
+  const saveRequiredHours = async () => {
+    if (!selectedTrainee || savingRequiredHours) return;
+    const value = requiredHoursInput.trim();
+    const target = value === "" ? null : Number(value);
+    if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
+      setRequiredHoursError("Enter a target between 0 and 10,000 hours.");
+      return;
+    }
+
+    setSavingRequiredHours(true);
+    setRequiredHoursError("");
+    const { data, error } = await supabase.rpc("dtr_admin_set_required_ojt_hours", {
+      target_user_id: selectedTrainee.id,
+      target_hours: target,
+    });
+    if (error) {
+      setRequiredHoursError(`Target was not saved. ${error.message}`);
+    } else if (data) {
+      setTrainees((current) =>
+        current.map((trainee) =>
+          trainee.id === selectedTrainee.id
+            ? { ...trainee, required_ojt_hours: data.required_ojt_hours }
+            : trainee,
+        ),
+      );
+      setRequiredHoursInput(data.required_ojt_hours == null ? "" : String(data.required_ojt_hours));
+    }
+    setSavingRequiredHours(false);
+  };
+
   const selectedTrainee = trainees.find((t) => t.id === selectedId);
+
+  useEffect(() => {
+    setRequiredHoursInput(
+      selectedTrainee?.required_ojt_hours == null ? "" : String(selectedTrainee.required_ojt_hours),
+    );
+    setRequiredHoursError("");
+  }, [selectedTrainee?.id, selectedTrainee?.required_ojt_hours]);
 
   const filteredTrainees = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return trainees;
     return trainees.filter((t) =>
-      [t.full_name, t.student_id, t.company]
+      [t.full_name, t.student_id, t.company, t.ojt_title]
         .filter(Boolean)
         .some((v) => (v as string).toLowerCase().includes(q)),
     );
@@ -1176,7 +1595,11 @@ function AdminDashboard() {
   };
 
   return (
-    <section className="grid gap-4 sm:gap-6 lg:grid-cols-[300px_1fr]">
+    <fieldset
+      disabled={mutating}
+      aria-busy={mutating}
+      className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-[300px_1fr]"
+    >
       {/* Trainee list */}
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
@@ -1192,8 +1615,8 @@ function AdminDashboard() {
         />
         {traineeError && (
           <p className="mb-2 text-xs text-red-600">
-            Couldn't load trainees: {traineeError}. Check your RLS policy allows admins to
-            select all profiles.
+            Couldn't load trainees: {traineeError}. Check your RLS policy allows admins to select
+            all profiles.
           </p>
         )}
         {loadingTrainees ? (
@@ -1220,6 +1643,22 @@ function AdminDashboard() {
                   >
                     {t.student_id || "No ID"} · {t.company || "No company"}
                   </div>
+                  <div
+                    className={`text-xs ${
+                      selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                    }`}
+                  >
+                    {t.ojt_title ? `OJT: ${t.ojt_title}` : "OJT title incomplete"}
+                  </div>
+                  <div
+                    className={`text-xs ${
+                      selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                    }`}
+                  >
+                    {t.required_ojt_hours == null
+                      ? "OJT target not set"
+                      : `Target: ${t.required_ojt_hours} hrs`}
+                  </div>
                 </button>
               </li>
             ))}
@@ -1238,11 +1677,46 @@ function AdminDashboard() {
             </h2>
             {selectedTrainee && (
               <p className="text-xs text-slate-500">
-                {selectedTrainee.student_id || "No ID"} ·{" "}
-                {selectedTrainee.company || "No company"} · {MONTHS[docMonth]}{" "}
-                {docYear} · Total: {selectedTotalHours.toFixed(2)} hrs across{" "}
-                {visibleEntries.length} day{visibleEntries.length === 1 ? "" : "s"}
+                {selectedTrainee.student_id || "No ID"} · {selectedTrainee.company || "No company"}{" "}
+                · {selectedTrainee.ojt_title || "No OJT title"} · {MONTHS[docMonth]} {docYear} ·
+                Total: {selectedTotalHours.toFixed(2)} hrs across {visibleEntries.length} day
+                {visibleEntries.length === 1 ? "" : "s"}
               </p>
+            )}
+            {selectedTrainee && (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <label className="block">
+                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Required OJT hours
+                  </span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    max="10000"
+                    step="0.25"
+                    aria-label="Required OJT hours"
+                    value={requiredHoursInput}
+                    onChange={(e) => {
+                      setRequiredHoursInput(e.target.value);
+                      setRequiredHoursError("");
+                    }}
+                    placeholder="486"
+                    className="mt-1 w-32 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                  />
+                </label>
+                <button
+                  onClick={saveRequiredHours}
+                  disabled={savingRequiredHours}
+                  className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                >
+                  {savingRequiredHours ? "Saving…" : "Save target"}
+                </button>
+                {requiredHoursError && (
+                  <p role="alert" className="basis-full text-xs text-red-600">
+                    {requiredHoursError}
+                  </p>
+                )}
+              </div>
             )}
           </div>
           {selectedTrainee && entries.length > 0 && (
@@ -1299,13 +1773,11 @@ function AdminDashboard() {
           </p>
         ) : entriesError ? (
           <p className="px-5 py-10 text-center text-sm text-red-600">
-            Couldn't load entries: {entriesError}. Check your RLS policy allows admins to
-            select all dtr_entries.
+            Couldn't load entries: {entriesError}. Check your RLS policy allows admins to select all
+            dtr_entries.
           </p>
         ) : loadingEntries ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-400">
-            Loading records…
-          </p>
+          <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>
         ) : entries.length === 0 ? (
           <p className="px-5 py-10 text-center text-sm text-slate-400">
             No records for this trainee yet.
@@ -1412,6 +1884,6 @@ function AdminDashboard() {
           </>
         )}
       </div>
-    </section>
+    </fieldset>
   );
 }

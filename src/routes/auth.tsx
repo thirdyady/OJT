@@ -18,14 +18,15 @@ export const Route = createFileRoute("/auth")({
 
 function AuthPage() {
   const navigate = useNavigate();
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
+  const [studentId, setStudentId] = useState("");
+  const [company, setCompany] = useState("");
+  const [ojtTitle, setOjtTitle] = useState("");
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState<{ kind: "error" | "info"; text: string } | null>(
-    null,
-  );
+  const [msg, setMsg] = useState<{ kind: "error" | "info"; text: string } | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
@@ -38,13 +39,27 @@ function AuthPage() {
     setLoading(true);
     setMsg(null);
     try {
-      if (mode === "signup") {
+      if (mode === "forgot") {
+        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (error) throw error;
+        setMsg({
+          kind: "info",
+          text: "If an account exists for this email, a password reset link has been sent. Check your inbox.",
+        });
+      } else if (mode === "signup") {
         const { error } = await supabase.auth.signUp({
-          email,
+          email: email.trim(),
           password,
           options: {
             emailRedirectTo: window.location.origin,
-            data: { full_name: fullName },
+            data: {
+              full_name: fullName.trim(),
+              student_id: studentId.trim(),
+              company: company.trim(),
+              ojt_title: ojtTitle.trim(),
+            },
           },
         });
         if (error) throw error;
@@ -75,30 +90,29 @@ function AuthPage() {
     <div className="flex min-h-screen bg-slate-50">
       {/* Left: PSA image panel (hidden on small screens) */}
       <div className="relative hidden w-1/2 items-center justify-center bg-slate-900 lg:flex">
-        <img
-          src={psaImage}
-          alt="PSA"
-          className="h-full w-full object-cover"
-        />
+        <img src={psaImage} alt="PSA" className="h-full w-full object-cover" />
       </div>
 
       {/* Right: Sign in / Sign up form */}
       <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2">
         <div className="w-full max-w-md">
           <div className="mb-6 text-center">
-            <Link
-              to="/"
-              className="text-xs font-medium uppercase tracking-widest text-slate-500"
-            >
+            <Link to="/" className="text-xs font-medium uppercase tracking-widest text-slate-500">
               OJT DTR
             </Link>
             <h1 className="mt-2 text-2xl font-semibold text-slate-900">
-              {mode === "signin" ? "Sign in to your DTR" : "Create your trainee account"}
+              {mode === "forgot"
+                ? "Reset your password"
+                : mode === "signin"
+                  ? "Sign in to your DTR"
+                  : "Create your trainee account"}
             </h1>
             <p className="mt-1 text-sm text-slate-500">
-              {mode === "signin"
-                ? "Track your daily time record securely."
-                : "Start logging your OJT attendance in seconds."}
+              {mode === "forgot"
+                ? "Enter your registered email to request a reset link."
+                : mode === "signin"
+                  ? "Track your daily time record securely."
+                  : "Start logging your OJT attendance in seconds."}
             </p>
           </div>
 
@@ -107,15 +121,44 @@ function AuthPage() {
             className="space-y-4 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
           >
             {mode === "signup" && (
-              <Field label="Full name">
-                <input
-                  required
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="Juan Dela Cruz"
-                  className="input"
-                />
-              </Field>
+              <>
+                <Field label="Full name">
+                  <input
+                    required
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Juan Dela Cruz"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Student ID">
+                  <input
+                    required
+                    value={studentId}
+                    onChange={(e) => setStudentId(e.target.value)}
+                    placeholder="2024-00001"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Host company">
+                  <input
+                    required
+                    value={company}
+                    onChange={(e) => setCompany(e.target.value)}
+                    placeholder="Acme Corp."
+                    className="input"
+                  />
+                </Field>
+                <Field label="OJT title">
+                  <input
+                    required
+                    value={ojtTitle}
+                    onChange={(e) => setOjtTitle(e.target.value)}
+                    placeholder="Data Analyst Intern"
+                    className="input"
+                  />
+                </Field>
+              </>
             )}
             <Field label="Email">
               <input
@@ -128,25 +171,25 @@ function AuthPage() {
                 className="input"
               />
             </Field>
-            <Field label="Password">
-              <input
-                type="password"
-                required
-                minLength={6}
-                autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="input"
-              />
-            </Field>
+            {mode !== "forgot" && (
+              <Field label="Password">
+                <input
+                  type="password"
+                  required
+                  minLength={6}
+                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="input"
+                />
+              </Field>
+            )}
 
             {msg && (
               <div
                 className={`rounded-md px-3 py-2 text-sm ${
-                  msg.kind === "error"
-                    ? "bg-red-50 text-red-700"
-                    : "bg-emerald-50 text-emerald-700"
+                  msg.kind === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
                 }`}
               >
                 {msg.text}
@@ -162,7 +205,9 @@ function AuthPage() {
                 ? "Please wait…"
                 : mode === "signin"
                   ? "Sign in"
-                  : "Create account"}
+                  : mode === "forgot"
+                    ? "Send reset link"
+                    : "Create account"}
             </button>
 
             <div className="text-center text-sm text-slate-500">
@@ -171,27 +216,36 @@ function AuthPage() {
                   No account?{" "}
                   <button
                     type="button"
+                    disabled={loading}
                     onClick={() => setMode("signup")}
                     className="font-medium text-slate-900 hover:underline"
                   >
                     Sign up
                   </button>
-                   <div className="mt-2">
+                  <div className="mt-2">
                     <button
                       type="button"
+                      disabled={loading}
+                      onClick={() => {
+                        setMode("forgot");
+                        setMsg(null);
+                      }}
                       className="font-medium text-slate-900 hover:underline"
-                >
-                  Forgot password?
-                </button>
-                </div>
-              </>
-            
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                </>
               ) : (
                 <>
                   Already have one?{" "}
                   <button
                     type="button"
-                    onClick={() => setMode("signin")}
+                    disabled={loading}
+                    onClick={() => {
+                      setMode("signin");
+                      setMsg(null);
+                    }}
                     className="font-medium text-slate-900 hover:underline"
                   >
                     Sign in
