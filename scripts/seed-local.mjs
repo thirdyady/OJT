@@ -71,4 +71,4 @@ writeFileSync(
 console.log(
   "Local admin and two trainee accounts are ready. Credentials: .local-test-accounts.json",
 );
-console.log("Local-only development configuration saved. Start with npm run dev.");
+console.log("Local-only development configuration saved. Start with npm run local:dev.");

@@ -19,6 +19,7 @@ export function localSupabase() {
   return {
     url: status.API_URL,
     publicKey: status.ANON_KEY || status.PUBLISHABLE_KEY,
+    serviceRoleKey: status.SERVICE_ROLE_KEY || status.SECRET_KEY,
     admin: createClient(status.API_URL, status.SERVICE_ROLE_KEY || status.SECRET_KEY, options),
     client: () => createClient(status.API_URL, status.ANON_KEY || status.PUBLISHABLE_KEY, options),
   };
