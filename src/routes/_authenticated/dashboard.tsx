@@ -1,7 +1,13 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { calculateCompletedHoursFromRecords, calculateOjtProgress } from "@/lib/ojt-progress.mjs";
+import { createTraineeAccount, type CreatedTraineeProfile } from "@/lib/admin-account.functions";
+import {
+  calculateCompletedHours as computeHours,
+  calculateCompletedHoursFromRecords,
+  calculateOjtProgress,
+} from "@/lib/ojt-progress.mjs";
 import psaLogo from "../../../assets/psa-logo.webp";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
@@ -40,6 +46,7 @@ type Profile = {
   company: string | null;
   ojt_title: string | null;
   required_ojt_hours: number | null;
+  is_active: boolean;
   is_admin?: boolean;
 };
 
@@ -50,6 +57,8 @@ type TraineeRow = {
   company: string | null;
   ojt_title: string | null;
   required_ojt_hours: number | null;
+  is_admin: boolean;
+  is_active: boolean;
 };
 
 const ORDER: Punch[] = ["check_in", "break_out", "break_in", "check_out"];
@@ -97,15 +106,17 @@ function fmtDate(key: string) {
   });
 }
 
-function computeHours(r: DtrRow) {
-  if (!r.check_in || !r.check_out) return 0;
-  const ci = new Date(r.check_in).getTime();
-  const co = new Date(r.check_out).getTime();
-  let breakMs = 0;
-  if (r.break_out && r.break_in) {
-    breakMs = Math.max(0, new Date(r.break_in).getTime() - new Date(r.break_out).getTime());
-  }
-  return Math.max(0, co - ci - breakMs) / 3_600_000;
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character];
+  });
 }
 
 function hhmm(iso: string | null): string {
@@ -138,6 +149,7 @@ const EMPTY_PROFILE: Profile = {
   company: "",
   ojt_title: "",
   required_ojt_hours: null,
+  is_active: true,
   is_admin: false,
 };
 
@@ -200,7 +212,7 @@ function buildDtrHtmlFor(
     <div class="copy">
       <div class="title-wrap"><h1>DAILY TIME RECORD</h1></div>
       <div class="name-block">
-        <div class="name-value">${fullName}</div>
+        <div class="name-value">${escapeHtml(fullName)}</div>
       </div>
       <div class="month-line">For the month of: &nbsp;<strong>${monthLabel}</strong></div>
       <table>
@@ -224,7 +236,7 @@ function buildDtrHtmlFor(
       </div>
       <div class="trainee-sig">
         <div class="sig-line"></div>
-        <div class="sig-name">${fullName}</div>
+        <div class="sig-name">${escapeHtml(fullName)}</div>
       </div>
       <div class="verified">Verified as to the prescribed office hours.</div>
       <div class="supervisor-sig">
@@ -284,6 +296,8 @@ function buildDtrHtmlFor(
 function printDtrFor(fullName: string, rows: DtrRow[], targetMonth: number, targetYear: number) {
   const { html } = buildDtrHtmlFor(fullName, rows, targetMonth, targetYear);
   const iframe = document.createElement("iframe");
+  // Allow printing and parent access, but never scripts in the generated document.
+  iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
   iframe.style.cssText = "width:0;height:0;border:none;position:absolute;left:-9999px;top:-9999px;";
   document.body.appendChild(iframe);
   iframe.srcdoc = html;
@@ -371,7 +385,7 @@ function downloadWordDtrFor(
     border-top:none;border-left:none;border-right:none;
     padding:3px 0 1px;
     font-family:Arial,sans-serif;
-  ">${fullName}</td>
+  ">${escapeHtml(fullName)}</td>
 </tr>
 <tr>
   <td colspan="5" style="
@@ -434,7 +448,7 @@ ${rows31}
     <table style="width:80%;margin:0 auto;border-collapse:collapse;">
       <tr>
         <td style="border-top:1px solid #000;text-align:center;font-size:9.5pt;font-weight:bold;padding:4px 0 2px;font-family:Arial,sans-serif;">
-          ${fullName}
+          ${escapeHtml(fullName)}
         </td>
       </tr>
     </table>
@@ -542,9 +556,11 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [accountInactive, setAccountInactive] = useState(false);
   const [savingAttendance, setSavingAttendance] = useState(false);
   const attendanceLock = useRef(false);
   const profileLock = useRef(false);
+  const inactiveSessionLock = useRef(false);
 
   // Month/year the user wants to view/download the DTR for. This now also
   // drives which rows are shown in the table below (see visibleRows).
@@ -555,6 +571,31 @@ function DashboardPage() {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+
+  const endInactiveSession = async () => {
+    if (inactiveSessionLock.current) return false;
+    inactiveSessionLock.current = true;
+    setAccountInactive(true);
+    setRows([]);
+    await supabase.auth.signOut();
+    navigate({ to: "/auth" });
+    return false;
+  };
+
+  const ensureActiveSession = async () => {
+    if (!userId || accountInactive) return false;
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("is_active")
+      .eq("id", userId)
+      .maybeSingle();
+    if (error) {
+      setActionError(`Your account status could not be checked. ${error.message}`);
+      return false;
+    }
+    if (!data?.is_active) return endInactiveSession();
+    return true;
+  };
 
   useEffect(() => {
     (async () => {
@@ -580,6 +621,13 @@ function DashboardPage() {
         if (entriesResult.error) throw entriesResult.error;
         if (profileResult.data) {
           const loadedProfile = { ...EMPTY_PROFILE, ...profileResult.data };
+          if (!loadedProfile.is_active) {
+            setAccountInactive(true);
+            setRows([]);
+            await supabase.auth.signOut();
+            navigate({ to: "/auth" });
+            return;
+          }
           setProfile(loadedProfile);
           setTargetInput(
             loadedProfile.required_ojt_hours == null
@@ -622,6 +670,7 @@ function DashboardPage() {
 
   const punch = async (p: Punch) => {
     if (!userId || attendanceLock.current || p !== nextPunch) return;
+    if (!(await ensureActiveSession())) return;
     attendanceLock.current = true;
     setSavingAttendance(true);
     setActionError("");
@@ -674,6 +723,7 @@ function DashboardPage() {
 
   const undoLast = async () => {
     if (!userId || !today.id || attendanceLock.current) return;
+    if (!(await ensureActiveSession())) return;
     const filled = ORDER.filter((p) => today[p]);
     const last = filled[filled.length - 1];
     if (!last) return;
@@ -709,6 +759,7 @@ function DashboardPage() {
 
   const saveProfile = async () => {
     if (!userId || profileLock.current) return;
+    if (!(await ensureActiveSession())) return;
     const missing = missingProfileFields(profile);
     if (missing.length > 0) {
       setActionError(`Please complete the required trainee details: ${missing.join(", ")}.`);
@@ -743,6 +794,7 @@ function DashboardPage() {
 
   const saveTarget = async () => {
     if (!userId || savingTarget) return;
+    if (!(await ensureActiveSession())) return;
     const value = targetInput.trim();
     const target = value === "" ? null : Number(value);
     if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
@@ -785,7 +837,8 @@ function DashboardPage() {
     [rows, downloadMonth, downloadYear],
   );
 
-  const exportCsv = () => {
+  const exportCsv = async () => {
+    if (!(await ensureActiveSession())) return;
     const csvRows = [
       ["Date", "Check In", "Break Out", "Break In", "Check Out", "Hours"],
       ...visibleRows.map((r) => [
@@ -811,11 +864,13 @@ function DashboardPage() {
   // functions defined above the component, passing this trainee's own data.
   // These still receive the FULL `rows` (not visibleRows) since the document
   // builder itself does its own month/year filtering internally.
-  const printDtr = () => {
+  const printDtr = async () => {
+    if (!(await ensureActiveSession())) return;
     printDtrFor(profile.full_name || "", rows, downloadMonth, downloadYear);
   };
 
-  const downloadWordDtr = () => {
+  const downloadWordDtr = async () => {
+    if (!(await ensureActiveSession())) return;
     downloadWordDtrFor(profile.full_name || "", rows, downloadMonth, downloadYear);
   };
 
@@ -1020,7 +1075,7 @@ function DashboardPage() {
                       type="number"
                       min="0.01"
                       max="10000"
-                      step="0.25"
+                      step="0.01"
                       aria-label="Required OJT hours"
                       value={targetInput}
                       onChange={(e) => {
@@ -1376,6 +1431,7 @@ function ProgressStat({ label, value }: { label: string; value: string }) {
 }
 
 function AdminDashboard() {
+  const createAccount = useServerFn(createTraineeAccount);
   const mutationLock = useRef(false);
   const requestVersion = useRef(0);
   const [mutating, setMutating] = useState(false);
@@ -1394,15 +1450,36 @@ function AdminDashboard() {
   // trainee. This now also drives which rows are shown in the table below.
   const [docMonth, setDocMonth] = useState<number>(new Date().getMonth());
   const [docYear, setDocYear] = useState<number>(new Date().getFullYear());
+  const [editFullName, setEditFullName] = useState("");
+  const [editStudentId, setEditStudentId] = useState("");
+  const [editCompany, setEditCompany] = useState("");
+  const [editOjtTitle, setEditOjtTitle] = useState("");
   const [requiredHoursInput, setRequiredHoursInput] = useState("");
-  const [savingRequiredHours, setSavingRequiredHours] = useState(false);
-  const [requiredHoursError, setRequiredHoursError] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileEditError, setProfileEditError] = useState("");
+  const [profileEditSuccess, setProfileEditSuccess] = useState("");
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [statusError, setStatusError] = useState("");
+  const [statusSuccess, setStatusSuccess] = useState("");
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [createFullName, setCreateFullName] = useState("");
+  const [createStudentId, setCreateStudentId] = useState("");
+  const [createCompany, setCreateCompany] = useState("");
+  const [createOjtTitle, setCreateOjtTitle] = useState("");
+  const [createEmail, setCreateEmail] = useState("");
+  const [createPassword, setCreatePassword] = useState("");
+  const [createPasswordConfirm, setCreatePasswordConfirm] = useState("");
+  const [createRequiredHours, setCreateRequiredHours] = useState("");
+  const [createError, setCreateError] = useState("");
+  const [createSuccess, setCreateSuccess] = useState("");
 
   useEffect(() => {
     (async () => {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id, full_name, student_id, company, ojt_title, required_ojt_hours")
+        .select(
+          "id, full_name, student_id, company, ojt_title, required_ojt_hours, is_admin, is_active",
+        )
         .order("full_name", { ascending: true });
       if (error) {
         setTraineeError(error.message);
@@ -1413,9 +1490,103 @@ function AdminDashboard() {
     })();
   }, []);
 
+  const createAccountSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const fullName = createFullName.trim();
+    const studentId = createStudentId.trim();
+    const company = createCompany.trim();
+    const ojtTitle = createOjtTitle.trim();
+    const email = createEmail.trim().toLowerCase();
+    const requiredOjtHours = createRequiredHours.trim();
+    const target = requiredOjtHours === "" ? null : Number(requiredOjtHours);
+    const missing = [
+      !fullName && "Full Name",
+      !studentId && "Student ID",
+      !company && "Host Company",
+      !ojtTitle && "OJT Title",
+      !email && "Email",
+      !createPassword && "Temporary password",
+    ].filter(Boolean) as string[];
+
+    setCreateError("");
+    setCreateSuccess("");
+    if (missing.length > 0) {
+      setCreateError(`Complete the required fields: ${missing.join(", ")}.`);
+      return;
+    }
+    if (createPassword !== createPasswordConfirm) {
+      setCreateError("Temporary passwords do not match.");
+      return;
+    }
+    if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
+      setCreateError("Enter a target between 0 and 10,000 hours, or leave it blank.");
+      return;
+    }
+
+    setCreatingAccount(true);
+    try {
+      const { profile: createdProfile } = await createAccount({
+        data: {
+          email,
+          password: createPassword,
+          fullName,
+          studentId,
+          company,
+          ojtTitle,
+          requiredOjtHours: target,
+        },
+      });
+      const profile = createdProfile as CreatedTraineeProfile;
+      setTrainees((current) =>
+        [...current, profile as TraineeRow].sort((a, b) =>
+          (a.full_name ?? "").localeCompare(b.full_name ?? ""),
+        ),
+      );
+      ++requestVersion.current;
+      setSelectedId(profile.id);
+      setEntries([]);
+      setLoadingEntries(false);
+      setEntriesError(null);
+      setEditFullName(profile.full_name ?? "");
+      setEditStudentId(profile.student_id ?? "");
+      setEditCompany(profile.company ?? "");
+      setEditOjtTitle(profile.ojt_title ?? "");
+      setRequiredHoursInput(
+        profile.required_ojt_hours == null ? "" : String(profile.required_ojt_hours),
+      );
+      setCreateFullName("");
+      setCreateStudentId("");
+      setCreateCompany("");
+      setCreateOjtTitle("");
+      setCreateEmail("");
+      setCreatePassword("");
+      setCreatePasswordConfirm("");
+      setCreateRequiredHours("");
+      setCreateSuccess(`Account created for ${profile.full_name || email}.`);
+    } catch (error) {
+      setCreateError(
+        error instanceof Error ? error.message : "Account was not created. Please try again.",
+      );
+    } finally {
+      setCreatingAccount(false);
+    }
+  };
+
   const loadEntries = async (userId: string) => {
     const version = ++requestVersion.current;
+    const trainee = trainees.find((row) => row.id === userId);
     setSelectedId(userId);
+    setEditFullName(trainee?.full_name ?? "");
+    setEditStudentId(trainee?.student_id ?? "");
+    setEditCompany(trainee?.company ?? "");
+    setEditOjtTitle(trainee?.ojt_title ?? "");
+    setRequiredHoursInput(
+      trainee?.required_ojt_hours == null ? "" : String(trainee.required_ojt_hours),
+    );
+    setProfileEditError("");
+    setProfileEditSuccess("");
+    setStatusError("");
+    setStatusSuccess("");
     setEntries([]);
     setLoadingEntries(true);
     setEntriesError(null);
@@ -1488,44 +1659,112 @@ function AdminDashboard() {
     }
   };
 
-  const saveRequiredHours = async () => {
-    if (!selectedTrainee || savingRequiredHours) return;
+  const saveTraineeProfile = async () => {
+    if (!selectedTrainee || savingProfile) return;
+    const version = requestVersion.current;
+    const fullName = editFullName.trim();
+    const studentId = editStudentId.trim();
+    const company = editCompany.trim();
+    const ojtTitle = editOjtTitle.trim();
     const value = requiredHoursInput.trim();
     const target = value === "" ? null : Number(value);
+    const missing = [
+      !fullName && "Full Name",
+      !studentId && "Student ID",
+      !company && "Host Company",
+      !ojtTitle && "OJT Title",
+    ].filter(Boolean) as string[];
+    if (missing.length > 0) {
+      setProfileEditError(`Complete the required fields: ${missing.join(", ")}.`);
+      setProfileEditSuccess("");
+      return;
+    }
     if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
-      setRequiredHoursError("Enter a target between 0 and 10,000 hours.");
+      setProfileEditError("Enter a target between 0 and 10,000 hours, or leave it blank.");
+      setProfileEditSuccess("");
       return;
     }
 
-    setSavingRequiredHours(true);
-    setRequiredHoursError("");
-    const { data, error } = await supabase.rpc("dtr_admin_set_required_ojt_hours", {
+    setSavingProfile(true);
+    setProfileEditError("");
+    setProfileEditSuccess("");
+    const { data, error } = await supabase.rpc("dtr_admin_update_trainee_profile", {
       target_user_id: selectedTrainee.id,
-      target_hours: target,
+      new_full_name: fullName,
+      new_student_id: studentId,
+      new_company: company,
+      new_ojt_title: ojtTitle,
+      new_required_ojt_hours: target,
     });
     if (error) {
-      setRequiredHoursError(`Target was not saved. ${error.message}`);
+      if (version === requestVersion.current)
+        setProfileEditError(`Profile was not saved. ${error.message}`);
     } else if (data) {
       setTrainees((current) =>
         current.map((trainee) =>
           trainee.id === selectedTrainee.id
-            ? { ...trainee, required_ojt_hours: data.required_ojt_hours }
+            ? {
+                ...trainee,
+                full_name: data.full_name,
+                student_id: data.student_id,
+                company: data.company,
+                ojt_title: data.ojt_title,
+                required_ojt_hours: data.required_ojt_hours,
+                is_admin: data.is_admin,
+              }
             : trainee,
         ),
       );
-      setRequiredHoursInput(data.required_ojt_hours == null ? "" : String(data.required_ojt_hours));
+      if (version === requestVersion.current) {
+        setEditFullName(data.full_name ?? "");
+        setEditStudentId(data.student_id ?? "");
+        setEditCompany(data.company ?? "");
+        setEditOjtTitle(data.ojt_title ?? "");
+        setRequiredHoursInput(
+          data.required_ojt_hours == null ? "" : String(data.required_ojt_hours),
+        );
+        setProfileEditSuccess("Trainee profile saved.");
+      }
     }
-    setSavingRequiredHours(false);
+    setSavingProfile(false);
+  };
+
+  const setAccountActive = async () => {
+    if (!selectedTrainee || savingStatus) return;
+    const version = requestVersion.current;
+    const nextActive = !selectedTrainee.is_active;
+    if (
+      !nextActive &&
+      !window.confirm(
+        "Deactivate this trainee account? Their profile and attendance history will be preserved, but they will be signed out and blocked from DTR operations.",
+      )
+    )
+      return;
+
+    setSavingStatus(true);
+    setStatusError("");
+    setStatusSuccess("");
+    setProfileEditSuccess("");
+    const { data, error } = await supabase.rpc("dtr_admin_set_account_active", {
+      target_user_id: selectedTrainee.id,
+      target_active: nextActive,
+    });
+    if (error) {
+      if (version === requestVersion.current)
+        setStatusError(`Account status was not changed. ${error.message}`);
+    } else if (data) {
+      setTrainees((current) =>
+        current.map((trainee) =>
+          trainee.id === selectedTrainee.id ? { ...trainee, is_active: data.is_active } : trainee,
+        ),
+      );
+      if (version === requestVersion.current)
+        setStatusSuccess(data.is_active ? "Account reactivated." : "Account deactivated.");
+    }
+    setSavingStatus(false);
   };
 
   const selectedTrainee = trainees.find((t) => t.id === selectedId);
-
-  useEffect(() => {
-    setRequiredHoursInput(
-      selectedTrainee?.required_ojt_hours == null ? "" : String(selectedTrainee.required_ojt_hours),
-    );
-    setRequiredHoursError("");
-  }, [selectedTrainee?.id, selectedTrainee?.required_ojt_hours]);
 
   const filteredTrainees = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -1595,295 +1834,588 @@ function AdminDashboard() {
   };
 
   return (
-    <fieldset
-      disabled={mutating}
-      aria-busy={mutating}
-      className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-[300px_1fr]"
-    >
-      {/* Trainee list */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-900">
-            Trainees {trainees.length > 0 && `(${trainees.length})`}
-          </h2>
-        </div>
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search name, ID, company…"
-          className="mb-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-400"
-        />
-        {traineeError && (
-          <p className="mb-2 text-xs text-red-600">
-            Couldn't load trainees: {traineeError}. Check your RLS policy allows admins to select
-            all profiles.
-          </p>
-        )}
-        {loadingTrainees ? (
-          <p className="text-xs text-slate-400">Loading…</p>
-        ) : filteredTrainees.length === 0 ? (
-          <p className="text-xs text-slate-400">No trainees found.</p>
-        ) : (
-          <ul className="max-h-[50vh] space-y-1 overflow-y-auto lg:max-h-[70vh]">
-            {filteredTrainees.map((t) => (
-              <li key={t.id}>
-                <button
-                  onClick={() => loadEntries(t.id)}
-                  className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
-                    selectedId === t.id
-                      ? "bg-slate-900 text-white"
-                      : "text-slate-700 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="font-medium">{t.full_name || "Unnamed"}</div>
-                  <div
-                    className={`text-xs ${
-                      selectedId === t.id ? "text-slate-300" : "text-slate-400"
-                    }`}
-                  >
-                    {t.student_id || "No ID"} · {t.company || "No company"}
-                  </div>
-                  <div
-                    className={`text-xs ${
-                      selectedId === t.id ? "text-slate-300" : "text-slate-400"
-                    }`}
-                  >
-                    {t.ojt_title ? `OJT: ${t.ojt_title}` : "OJT title incomplete"}
-                  </div>
-                  <div
-                    className={`text-xs ${
-                      selectedId === t.id ? "text-slate-300" : "text-slate-400"
-                    }`}
-                  >
-                    {t.required_ojt_hours == null
-                      ? "OJT target not set"
-                      : `Target: ${t.required_ojt_hours} hrs`}
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+    <section aria-labelledby="manage-accounts-heading" className="space-y-3">
+      <div>
+        <h2 id="manage-accounts-heading" className="text-base font-semibold text-slate-900">
+          Manage Accounts
+        </h2>
+        <p className="text-xs text-slate-500">
+          View trainee details and update permitted profile information. Account deletion is not
+          available here.
+        </p>
       </div>
-
-      {/* Selected trainee's DTR */}
-      <div className="rounded-xl border border-slate-200 bg-white">
-        <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
-          <div>
+      <form
+        onSubmit={createAccountSubmit}
+        data-admin-create-account-endpoint={createTraineeAccount.url}
+        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+      >
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-slate-900">Create trainee account</h3>
+          <p className="mt-1 text-xs text-slate-500">
+            Set the trainee&apos;s sign-in details and profile. The account is active immediately.
+          </p>
+        </div>
+        <fieldset disabled={creatingAccount} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Full Name</span>
+            <input
+              required
+              aria-label="New trainee full name"
+              value={createFullName}
+              onChange={(e) => {
+                setCreateFullName(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="Juan Dela Cruz"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Student ID</span>
+            <input
+              required
+              aria-label="New trainee student ID"
+              value={createStudentId}
+              onChange={(e) => {
+                setCreateStudentId(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="2024-00001"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Host Company</span>
+            <input
+              required
+              aria-label="New trainee host company"
+              value={createCompany}
+              onChange={(e) => {
+                setCreateCompany(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="Philippine Statistics Authority"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">OJT Title</span>
+            <input
+              required
+              aria-label="New trainee OJT title"
+              value={createOjtTitle}
+              onChange={(e) => {
+                setCreateOjtTitle(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="Data Analyst Intern"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Email</span>
+            <input
+              required
+              type="email"
+              aria-label="New trainee email"
+              autoComplete="off"
+              value={createEmail}
+              onChange={(e) => {
+                setCreateEmail(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="trainee@school.edu"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Temporary password</span>
+            <input
+              required
+              type="password"
+              minLength={8}
+              maxLength={72}
+              aria-label="New trainee temporary password"
+              autoComplete="new-password"
+              value={createPassword}
+              onChange={(e) => {
+                setCreatePassword(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="At least 8 characters"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Confirm password</span>
+            <input
+              required
+              type="password"
+              minLength={8}
+              maxLength={72}
+              aria-label="Confirm new trainee password"
+              autoComplete="new-password"
+              value={createPasswordConfirm}
+              onChange={(e) => {
+                setCreatePasswordConfirm(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="Repeat the password"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs font-medium text-slate-600">Required OJT hours</span>
+            <input
+              type="number"
+              min="0.01"
+              max="10000"
+              step="0.01"
+              aria-label="New trainee required OJT hours"
+              value={createRequiredHours}
+              onChange={(e) => {
+                setCreateRequiredHours(e.target.value);
+                setCreateError("");
+                setCreateSuccess("");
+              }}
+              placeholder="486"
+              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+            />
+          </label>
+        </fieldset>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="submit"
+            disabled={creatingAccount}
+            className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+          >
+            {creatingAccount ? "Creating..." : "Create trainee account"}
+          </button>
+          {createError && (
+            <p role="alert" className="text-xs text-red-600">
+              {createError}
+            </p>
+          )}
+          {createSuccess && (
+            <p role="status" className="text-xs text-emerald-700">
+              {createSuccess}
+            </p>
+          )}
+        </div>
+      </form>
+      <fieldset
+        disabled={mutating}
+        aria-busy={mutating}
+        className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-[300px_1fr]"
+      >
+        {/* Account list */}
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">
-              {selectedTrainee
-                ? `${selectedTrainee.full_name || "Unnamed"}'s DTR`
-                : "Select a trainee"}
+              Accounts {trainees.length > 0 && `(${trainees.length})`}
             </h2>
-            {selectedTrainee && (
-              <p className="text-xs text-slate-500">
-                {selectedTrainee.student_id || "No ID"} · {selectedTrainee.company || "No company"}{" "}
-                · {selectedTrainee.ojt_title || "No OJT title"} · {MONTHS[docMonth]} {docYear} ·
-                Total: {selectedTotalHours.toFixed(2)} hrs across {visibleEntries.length} day
-                {visibleEntries.length === 1 ? "" : "s"}
-              </p>
-            )}
-            {selectedTrainee && (
-              <div className="mt-3 flex flex-wrap items-end gap-2">
-                <label className="block">
-                  <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Required OJT hours
-                  </span>
-                  <input
-                    type="number"
-                    min="0.01"
-                    max="10000"
-                    step="0.25"
-                    aria-label="Required OJT hours"
-                    value={requiredHoursInput}
-                    onChange={(e) => {
-                      setRequiredHoursInput(e.target.value);
-                      setRequiredHoursError("");
-                    }}
-                    placeholder="486"
-                    className="mt-1 w-32 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                  />
-                </label>
-                <button
-                  onClick={saveRequiredHours}
-                  disabled={savingRequiredHours}
-                  className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                >
-                  {savingRequiredHours ? "Saving…" : "Save target"}
-                </button>
-                {requiredHoursError && (
-                  <p role="alert" className="basis-full text-xs text-red-600">
-                    {requiredHoursError}
-                  </p>
-                )}
-              </div>
-            )}
           </div>
-          {selectedTrainee && entries.length > 0 && (
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-              <select
-                value={docMonth}
-                onChange={(e) => setDocMonth(Number(e.target.value))}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-slate-400"
-                aria-label="Select month to view/print/download"
-              >
-                {MONTHS.map((m, i) => (
-                  <option key={m} value={i}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={docYear}
-                onChange={(e) => setDocYear(Number(e.target.value))}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-slate-400"
-                aria-label="Select year to view/print/download"
-              >
-                {availableYears.map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
-              </select>
-              <button
-                onClick={exportSelectedCsv}
-                className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Export CSV
-              </button>
-              <button
-                onClick={printSelectedDtr}
-                className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Print DTR
-              </button>
-              <button
-                onClick={downloadSelectedWordDtr}
-                className="col-span-2 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:col-span-1"
-              >
-                Download Word
-              </button>
-            </div>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search name, ID, company…"
+            className="mb-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-400"
+          />
+          {traineeError && (
+            <p className="mb-2 text-xs text-red-600">
+              Couldn't load accounts: {traineeError}. Check your RLS policy allows admins to select
+              all profiles.
+            </p>
+          )}
+          {loadingTrainees ? (
+            <p className="text-xs text-slate-400">Loading…</p>
+          ) : filteredTrainees.length === 0 ? (
+            <p className="text-xs text-slate-400">No accounts found.</p>
+          ) : (
+            <ul className="max-h-[50vh] space-y-1 overflow-y-auto lg:max-h-[70vh]">
+              {filteredTrainees.map((t) => (
+                <li key={t.id}>
+                  <button
+                    onClick={() => loadEntries(t.id)}
+                    className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
+                      selectedId === t.id
+                        ? "bg-slate-900 text-white"
+                        : "text-slate-700 hover:bg-slate-50"
+                    }`}
+                  >
+                    <div className="font-medium">{t.full_name || "Unnamed"}</div>
+                    <div
+                      className={`text-xs ${
+                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                      }`}
+                    >
+                      {t.student_id || "No ID"} · {t.company || "No company"}
+                    </div>
+                    <div
+                      className={`text-xs ${
+                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                      }`}
+                    >
+                      {t.ojt_title ? `OJT: ${t.ojt_title}` : "OJT title incomplete"}
+                    </div>
+                    <div
+                      className={`text-xs ${
+                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                      }`}
+                    >
+                      {t.required_ojt_hours == null
+                        ? "OJT target not set"
+                        : `Target: ${t.required_ojt_hours} hrs`}
+                    </div>
+                    <div
+                      className={`text-xs font-medium ${
+                        selectedId === t.id
+                          ? t.is_active
+                            ? "text-emerald-300"
+                            : "text-amber-300"
+                          : t.is_active
+                            ? "text-emerald-600"
+                            : "text-amber-600"
+                      }`}
+                    >
+                      {t.is_active ? "Active account" : "Inactive account"}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
 
-        {!selectedId ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-400">
-            Pick a trainee from the list to view their records.
-          </p>
-        ) : entriesError ? (
-          <p className="px-5 py-10 text-center text-sm text-red-600">
-            Couldn't load entries: {entriesError}. Check your RLS policy allows admins to select all
-            dtr_entries.
-          </p>
-        ) : loadingEntries ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>
-        ) : entries.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-400">
-            No records for this trainee yet.
-          </p>
-        ) : visibleEntries.length === 0 ? (
-          <p className="px-5 py-10 text-center text-sm text-slate-400">
-            No records for {MONTHS[docMonth]} {docYear}.
-          </p>
-        ) : (
-          <>
-            {/* Mobile: card list */}
-            <div className="divide-y divide-slate-100 sm:hidden">
-              {visibleEntries.map((r) => (
-                <div key={r.id} className="px-4 py-3">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-medium text-slate-900">
-                      {fmtDate(r.entry_date)}
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <span className="font-mono text-xs text-slate-500">
-                        {computeHours(r).toFixed(2)} hrs
-                      </span>
-                      <button
-                        onClick={() => deleteEntry(r.id!)}
-                        className="text-xs font-medium text-red-600 hover:underline"
-                      >
-                        Delete
-                      </button>
-                    </div>
+        {/* Selected trainee's DTR */}
+        <div className="rounded-xl border border-slate-200 bg-white">
+          <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
+            <div>
+              <h2 className="text-sm font-semibold text-slate-900">
+                {selectedTrainee
+                  ? `${selectedTrainee.full_name || "Unnamed"}'s DTR`
+                  : "Select a trainee"}
+              </h2>
+              {selectedTrainee && (
+                <p className="text-xs text-slate-500">
+                  {selectedTrainee.student_id || "No ID"}
+                  {" \u00b7 "}
+                  {selectedTrainee.company || "No company"}
+                  {" \u00b7 "}
+                  {selectedTrainee.ojt_title || "No OJT title"}
+                  {" \u00b7 "}
+                  {MONTHS[docMonth]} {docYear}
+                  {" \u00b7 "}
+                  Total: {selectedTotalHours.toFixed(2)} hrs across {visibleEntries.length} day
+                  {visibleEntries.length === 1 ? "" : "s"}
+                </p>
+              )}
+              {selectedTrainee && (
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-3">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Trainee profile
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Update profile details and the school-specific OJT target.
+                    </p>
                   </div>
-                  <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-slate-600">
-                    {ORDER.map((p) => (
-                      <div key={p} className="flex items-center gap-1.5">
-                        <span className="text-slate-400">{LABELS[p]}: </span>
-                        <span className="font-mono">{fmtTime(r[p] as string | null)}</span>
-                        {r[p] && (
-                          <button
-                            onClick={() => clearPunch(r.id!, p)}
-                            title={`Clear ${LABELS[p]}`}
-                            className="text-[10px] font-medium text-slate-400 hover:text-red-600"
-                          >
-                            ✕
-                          </button>
-                        )}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="text-xs font-medium text-slate-600">Full Name</span>
+                      <input
+                        value={editFullName}
+                        onChange={(e) => {
+                          setEditFullName(e.target.value);
+                          setProfileEditError("");
+                          setProfileEditSuccess("");
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-slate-600">Student ID</span>
+                      <input
+                        value={editStudentId}
+                        onChange={(e) => {
+                          setEditStudentId(e.target.value);
+                          setProfileEditError("");
+                          setProfileEditSuccess("");
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-slate-600">Host Company</span>
+                      <input
+                        value={editCompany}
+                        onChange={(e) => {
+                          setEditCompany(e.target.value);
+                          setProfileEditError("");
+                          setProfileEditSuccess("");
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-xs font-medium text-slate-600">OJT Title</span>
+                      <input
+                        value={editOjtTitle}
+                        onChange={(e) => {
+                          setEditOjtTitle(e.target.value);
+                          setProfileEditError("");
+                          setProfileEditSuccess("");
+                        }}
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                    <label className="block sm:col-span-2">
+                      <span className="text-xs font-medium text-slate-600">Required OJT hours</span>
+                      <input
+                        type="number"
+                        min="0.01"
+                        max="10000"
+                        step="0.01"
+                        aria-label="Required OJT hours"
+                        value={requiredHoursInput}
+                        onChange={(e) => {
+                          setRequiredHoursInput(e.target.value);
+                          setProfileEditError("");
+                          setProfileEditSuccess("");
+                        }}
+                        placeholder="486"
+                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                      />
+                    </label>
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
+                    <div className="mr-auto">
+                      <div className="text-xs font-medium text-slate-600">Account status</div>
+                      <div
+                        className={`text-sm font-semibold ${
+                          selectedTrainee.is_active ? "text-emerald-700" : "text-amber-700"
+                        }`}
+                      >
+                        {selectedTrainee.is_active ? "Active" : "Inactive"}
                       </div>
-                    ))}
+                    </div>
+                    <button
+                      onClick={setAccountActive}
+                      disabled={savingStatus || selectedTrainee.is_admin}
+                      className="rounded-md border border-slate-300 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {savingStatus
+                        ? "Saving..."
+                        : selectedTrainee.is_active
+                          ? "Deactivate account"
+                          : "Reactivate account"}
+                    </button>
+                    {statusError && (
+                      <p role="alert" className="basis-full text-xs text-red-600">
+                        {statusError}
+                      </p>
+                    )}
+                    {statusSuccess && (
+                      <p role="status" className="basis-full text-xs text-emerald-700">
+                        {statusSuccess}
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button
+                      onClick={saveTraineeProfile}
+                      disabled={savingProfile}
+                      className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                    >
+                      {savingProfile ? "Saving..." : "Save trainee profile"}
+                    </button>
+                    {profileEditError && (
+                      <p role="alert" className="text-xs text-red-600">
+                        {profileEditError}
+                      </p>
+                    )}
+                    {profileEditSuccess && (
+                      <p role="status" className="text-xs text-emerald-700">
+                        {profileEditSuccess}
+                      </p>
+                    )}
                   </div>
                 </div>
-              ))}
+              )}
             </div>
+            {selectedTrainee && entries.length > 0 && (
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+                <select
+                  value={docMonth}
+                  onChange={(e) => setDocMonth(Number(e.target.value))}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-slate-400"
+                  aria-label="Select month to view/print/download"
+                >
+                  {MONTHS.map((m, i) => (
+                    <option key={m} value={i}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+                <select
+                  value={docYear}
+                  onChange={(e) => setDocYear(Number(e.target.value))}
+                  className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs font-medium text-slate-700 outline-none focus:border-slate-400"
+                  aria-label="Select year to view/print/download"
+                >
+                  {availableYears.map((y) => (
+                    <option key={y} value={y}>
+                      {y}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={exportSelectedCsv}
+                  className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Export CSV
+                </button>
+                <button
+                  onClick={printSelectedDtr}
+                  className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Print DTR
+                </button>
+                <button
+                  onClick={downloadSelectedWordDtr}
+                  className="col-span-2 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:col-span-1"
+                >
+                  Download Word
+                </button>
+              </div>
+            )}
+          </div>
 
-            {/* Desktop/tablet: table */}
-            <div className="hidden overflow-x-auto sm:block">
-              <table className="w-full text-sm">
-                <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
-                  <tr>
-                    <th className="px-5 py-3 font-medium">Date</th>
-                    <th className="px-5 py-3 font-medium">Check In</th>
-                    <th className="px-5 py-3 font-medium">Break Out</th>
-                    <th className="px-5 py-3 font-medium">Break In</th>
-                    <th className="px-5 py-3 font-medium">Check Out</th>
-                    <th className="px-5 py-3 text-right font-medium">Hours</th>
-                    <th className="px-5 py-3 text-right font-medium">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {visibleEntries.map((r) => (
-                    <tr key={r.id} className="text-slate-700">
-                      <td className="px-5 py-3 font-medium text-slate-900">
+          {!selectedId ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-400">
+              Pick a trainee from the list to view their records.
+            </p>
+          ) : entriesError ? (
+            <p className="px-5 py-10 text-center text-sm text-red-600">
+              Couldn't load entries: {entriesError}. Check your RLS policy allows admins to select
+              all dtr_entries.
+            </p>
+          ) : loadingEntries ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>
+          ) : entries.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-400">
+              No records for this trainee yet.
+            </p>
+          ) : visibleEntries.length === 0 ? (
+            <p className="px-5 py-10 text-center text-sm text-slate-400">
+              No records for {MONTHS[docMonth]} {docYear}.
+            </p>
+          ) : (
+            <>
+              {/* Mobile: card list */}
+              <div className="divide-y divide-slate-100 sm:hidden">
+                {visibleEntries.map((r) => (
+                  <div key={r.id} className="px-4 py-3">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-sm font-medium text-slate-900">
                         {fmtDate(r.entry_date)}
-                      </td>
-                      {ORDER.map((p) => (
-                        <td key={p} className="px-5 py-3 font-mono">
-                          <div className="flex items-center gap-2">
-                            <span>{fmtTime(r[p] as string | null)}</span>
-                            {r[p] && (
-                              <button
-                                onClick={() => clearPunch(r.id!, p)}
-                                title={`Clear ${LABELS[p]}`}
-                                className="text-[10px] font-medium text-slate-400 hover:text-red-600"
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      ))}
-                      <td className="px-5 py-3 text-right font-mono">
-                        {computeHours(r).toFixed(2)}
-                      </td>
-                      <td className="px-5 py-3 text-right">
+                      </span>
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono text-xs text-slate-500">
+                          {computeHours(r).toFixed(2)} hrs
+                        </span>
                         <button
                           onClick={() => deleteEntry(r.id!)}
                           className="text-xs font-medium text-red-600 hover:underline"
                         >
                           Delete
                         </button>
-                      </td>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs text-slate-600">
+                      {ORDER.map((p) => (
+                        <div key={p} className="flex items-center gap-1.5">
+                          <span className="text-slate-400">{LABELS[p]}: </span>
+                          <span className="font-mono">{fmtTime(r[p] as string | null)}</span>
+                          {r[p] && (
+                            <button
+                              onClick={() => clearPunch(r.id!, p)}
+                              title={`Clear ${LABELS[p]}`}
+                              className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Desktop/tablet: table */}
+              <div className="hidden overflow-x-auto sm:block">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-5 py-3 font-medium">Date</th>
+                      <th className="px-5 py-3 font-medium">Check In</th>
+                      <th className="px-5 py-3 font-medium">Break Out</th>
+                      <th className="px-5 py-3 font-medium">Break In</th>
+                      <th className="px-5 py-3 font-medium">Check Out</th>
+                      <th className="px-5 py-3 text-right font-medium">Hours</th>
+                      <th className="px-5 py-3 text-right font-medium">Actions</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        )}
-      </div>
-    </fieldset>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleEntries.map((r) => (
+                      <tr key={r.id} className="text-slate-700">
+                        <td className="px-5 py-3 font-medium text-slate-900">
+                          {fmtDate(r.entry_date)}
+                        </td>
+                        {ORDER.map((p) => (
+                          <td key={p} className="px-5 py-3 font-mono">
+                            <div className="flex items-center gap-2">
+                              <span>{fmtTime(r[p] as string | null)}</span>
+                              {r[p] && (
+                                <button
+                                  onClick={() => clearPunch(r.id!, p)}
+                                  title={`Clear ${LABELS[p]}`}
+                                  className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        ))}
+                        <td className="px-5 py-3 text-right font-mono">
+                          {computeHours(r).toFixed(2)}
+                        </td>
+                        <td className="px-5 py-3 text-right">
+                          <button
+                            onClick={() => deleteEntry(r.id!)}
+                            className="text-xs font-medium text-red-600 hover:underline"
+                          >
+                            Delete
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </fieldset>
+    </section>
   );
 }
