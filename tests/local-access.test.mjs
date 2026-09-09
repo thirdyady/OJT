@@ -46,6 +46,7 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     assert.deepEqual(checked(await a.from("dtr_entries").delete().eq("id", entry.id).select()), []);
     assert.ok((await a.from("profiles").update({ is_admin: true }).eq("id", trainee.id)).error);
     assert.ok((await a.from("profiles").upsert({ id: trainee.id, is_admin: true })).error);
+    assert.ok((await a.from("profiles").update({ is_active: false }).eq("id", trainee.id)).error);
     checked(
       await a
         .from("profiles")
@@ -53,6 +54,12 @@ test("local RLS separates trainees, permits admin attendance management, and pre
         .eq("id", trainee.id)
         .select()
         .single(),
+    );
+    assert.deepEqual(
+      checked(
+        await a.from("profiles").update({ full_name: "Other name" }).eq("id", other.id).select(),
+      ),
+      [],
     );
     const own = checked(
       await a
@@ -80,6 +87,34 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     checked(
       await b.from("dtr_entries").update({ check_in: null }).eq("id", entry.id).select().single(),
     );
+    const editedProfile = checked(
+      await b.rpc("dtr_admin_update_trainee_profile", {
+        target_user_id: trainee.id,
+        new_full_name: "Admin edited trainee",
+        new_student_id: "ADMIN-EDIT-001",
+        new_company: "PSA Admin Test",
+        new_ojt_title: "Admin Edited Intern",
+        new_required_ojt_hours: 486,
+      }),
+    );
+    assert.deepEqual(
+      {
+        full_name: editedProfile.full_name,
+        student_id: editedProfile.student_id,
+        company: editedProfile.company,
+        ojt_title: editedProfile.ojt_title,
+        required_ojt_hours: editedProfile.required_ojt_hours,
+        is_admin: editedProfile.is_admin,
+      },
+      {
+        full_name: "Admin edited trainee",
+        student_id: "ADMIN-EDIT-001",
+        company: "PSA Admin Test",
+        ojt_title: "Admin Edited Intern",
+        required_ojt_hours: 486,
+        is_admin: false,
+      },
+    );
     const updatedTarget = checked(
       await b.rpc("dtr_admin_set_required_ojt_hours", {
         target_user_id: trainee.id,
@@ -87,6 +122,72 @@ test("local RLS separates trainees, permits admin attendance management, and pre
       }),
     );
     assert.equal(updatedTarget.required_ojt_hours, 486);
+    const deactivated = checked(
+      await b.rpc("dtr_admin_set_account_active", {
+        target_user_id: trainee.id,
+        target_active: false,
+      }),
+    );
+    assert.equal(deactivated.is_active, false);
+    assert.equal(
+      checked(await a.from("profiles").select("is_active").eq("id", trainee.id).single()).is_active,
+      false,
+    );
+    assert.equal(checked(await a.rpc("dtr_is_active")), false);
+    assert.deepEqual(checked(await a.from("dtr_entries").select().eq("id", own.id)), []);
+    assert.deepEqual(
+      checked(await a.from("dtr_entries").update({ check_in: null }).eq("id", own.id).select()),
+      [],
+    );
+    assert.deepEqual(
+      checked(
+        await a
+          .from("profiles")
+          .update({ full_name: "Inactive update" })
+          .eq("id", trainee.id)
+          .select(),
+      ),
+      [],
+    );
+    assert.ok(
+      (await a.from("dtr_entries").insert({ user_id: trainee.id, entry_date: "2000-01-03" })).error,
+    );
+    assert.equal(
+      checked(await b.from("dtr_entries").select().eq("id", own.id).single()).id,
+      own.id,
+    );
+    const reactivated = checked(
+      await b.rpc("dtr_admin_set_account_active", {
+        target_user_id: trainee.id,
+        target_active: true,
+      }),
+    );
+    assert.equal(reactivated.is_active, true);
+    assert.equal(checked(await a.rpc("dtr_is_active")), true);
+    assert.equal(
+      checked(await a.from("dtr_entries").select().eq("id", own.id).single()).id,
+      own.id,
+    );
+    assert.ok(
+      (
+        await b.rpc("dtr_admin_set_account_active", {
+          target_user_id: admin.id,
+          target_active: false,
+        })
+      ).error,
+    );
+    assert.ok(
+      (
+        await a.rpc("dtr_admin_update_trainee_profile", {
+          target_user_id: other.id,
+          new_full_name: "Trainee cannot edit this",
+          new_student_id: "NOPE",
+          new_company: "Nope",
+          new_ojt_title: "Nope",
+          new_required_ojt_hours: 486,
+        })
+      ).error,
+    );
     assert.ok(
       (
         await a.rpc("dtr_admin_set_required_ojt_hours", {
