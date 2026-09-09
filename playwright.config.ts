@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 import { localSupabase } from "./scripts/local-supabase.mjs";
 
-const { url, publicKey } = localSupabase();
+const { url, publicKey, serviceRoleKey } = localSupabase();
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -16,6 +16,12 @@ export default defineConfig({
     command: "npm run dev -- --strictPort",
     url: "http://localhost:3000",
     reuseExistingServer: false,
-    env: { VITE_SUPABASE_URL: url, VITE_SUPABASE_PUBLISHABLE_KEY: publicKey },
+    env: {
+      VITE_SUPABASE_URL: url,
+      VITE_SUPABASE_PUBLISHABLE_KEY: publicKey,
+      SUPABASE_URL: url,
+      SUPABASE_PUBLISHABLE_KEY: publicKey,
+      SUPABASE_SERVICE_ROLE_KEY: serviceRoleKey,
+    },
   },
 });

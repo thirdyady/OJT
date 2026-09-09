@@ -46,6 +46,7 @@ export type Database = {
           full_name: string | null;
           id: string;
           is_admin: boolean;
+          is_active: boolean;
           ojt_title: string | null;
           required_ojt_hours: number | null;
           student_id: string | null;
@@ -57,6 +58,7 @@ export type Database = {
           full_name?: string | null;
           id: string;
           is_admin?: boolean;
+          is_active?: boolean;
           ojt_title?: string | null;
           required_ojt_hours?: number | null;
           student_id?: string | null;
@@ -68,6 +70,7 @@ export type Database = {
           full_name?: string | null;
           id?: string;
           is_admin?: boolean;
+          is_active?: boolean;
           ojt_title?: string | null;
           required_ojt_hours?: number | null;
           student_id?: string | null;
@@ -81,8 +84,24 @@ export type Database = {
     };
     Functions: {
       dtr_is_admin: { Args: never; Returns: boolean };
+      dtr_is_active: { Args: never; Returns: boolean };
       dtr_admin_set_required_ojt_hours: {
         Args: { target_hours: number | null; target_user_id: string };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+      };
+      dtr_admin_update_trainee_profile: {
+        Args: {
+          new_company: string | null;
+          new_full_name: string | null;
+          new_ojt_title: string | null;
+          new_required_ojt_hours: number | null;
+          new_student_id: string | null;
+          target_user_id: string;
+        };
+        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+      };
+      dtr_admin_set_account_active: {
+        Args: { target_active: boolean; target_user_id: string };
         Returns: Database["public"]["Tables"]["profiles"]["Row"];
       };
     };

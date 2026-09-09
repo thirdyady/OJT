@@ -6,6 +6,7 @@
   "scripts": {
     "local:start": "npx --yes supabase start",
     "local:seed": "node scripts/seed-local.mjs",
+    "local:dev": "node scripts/dev-local.mjs",
     "test:local": "node --test tests/local-access.test.mjs tests/progress-calculations.test.mjs",
     "test:progress": "node --test tests/progress-calculations.test.mjs",
     "test:e2e": "playwright test",
