@@ -82,6 +82,73 @@ const LABELS: Record<Punch, string> = {
   check_out: "Check Out",
 };
 
+const ATTENDANCE_CONFLICT_MESSAGE =
+  "This attendance view is out of date. Another tab or an administrator changed today's record. Reload records before trying again. No changes were made.";
+
+class AttendanceConflictError extends Error {
+  constructor() {
+    super(ATTENDANCE_CONFLICT_MESSAGE);
+    this.name = "AttendanceConflictError";
+  }
+}
+
+function isAttendanceConflict(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { code?: unknown; message?: unknown };
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  const message = typeof candidate.message === "string" ? candidate.message : "";
+  return (
+    code === "PGRST116" ||
+    code === "23505" ||
+    /no rows|0 rows|multiple \(or no\) rows|duplicate key/i.test(message)
+  );
+}
+
+/**
+ * Return a warning only when a persisted row is inconsistent or out of order.
+ * A valid prefix such as check-in -> break-out with a pending break-in or
+ * check-out is a normal workday in progress and intentionally returns null.
+ */
+function attendanceWarning(row: DtrRow): string | null {
+  if (!row.id) return null;
+
+  const filled = ORDER.map((field) => Boolean(row[field]));
+  const firstMissing = filled.indexOf(false);
+  // The shared calculator accepts a complete day without a break pair.
+  // Still validate its timestamps below; this is not a change to punch order.
+  const completeWithoutBreak = row.check_in && row.check_out && !row.break_out && !row.break_in;
+  if (!completeWithoutBreak && firstMissing >= 0 && filled.slice(firstMissing + 1).some(Boolean)) {
+    return "This DTR has punches out of order. Refresh your records before making another change.";
+  }
+
+  const parsed = (value: string | null) => (value ? Date.parse(value) : null);
+  const checkIn = parsed(row.check_in);
+  const breakOut = parsed(row.break_out);
+  const breakIn = parsed(row.break_in);
+  const checkOut = parsed(row.check_out);
+  if (row.check_in && !Number.isFinite(checkIn))
+    return "This DTR contains an invalid check-in time.";
+  if (row.break_out && !Number.isFinite(breakOut))
+    return "This DTR contains an invalid break-out time.";
+  if (row.break_in && !Number.isFinite(breakIn))
+    return "This DTR contains an invalid break-in time.";
+  if (row.check_out && !Number.isFinite(checkOut))
+    return "This DTR contains an invalid check-out time.";
+  if (checkIn !== null && breakOut !== null && breakOut < checkIn) {
+    return "This DTR has inconsistent punch times. Refresh your records before making another change.";
+  }
+  if (breakOut !== null && breakIn !== null && breakIn <= breakOut) {
+    return "This DTR has inconsistent break times. Refresh your records before making another change.";
+  }
+  if (checkIn !== null && checkOut !== null && checkOut <= checkIn) {
+    return "This DTR has inconsistent punch times. Refresh your records before making another change.";
+  }
+  if (breakIn !== null && checkOut !== null && checkOut < breakIn) {
+    return "This DTR has inconsistent punch times. Refresh your records before making another change.";
+  }
+  return null;
+}
+
 const MONTHS = [
   "January",
   "February",
@@ -569,6 +636,7 @@ function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [actionError, setActionError] = useState("");
+  const [attendanceConflict, setAttendanceConflict] = useState(false);
   const [accountInactive, setAccountInactive] = useState(false);
   const [savingAttendance, setSavingAttendance] = useState(false);
   const attendanceLock = useRef(false);
@@ -681,13 +749,16 @@ function DashboardPage() {
     return null;
   }, [today]);
 
+  const todayWarning = useMemo(() => attendanceWarning(today), [today]);
+
   const punch = async (p: Punch) => {
     if (!userId || attendanceLock.current || p !== nextPunch) return;
-    if (!(await ensureActiveSession())) return;
     attendanceLock.current = true;
     setSavingAttendance(true);
     setActionError("");
+    setAttendanceConflict(false);
     try {
+      if (!(await ensureActiveSession())) return;
       const nowIso = new Date().toISOString();
       // Compare the current timestamps before writing so another tab cannot
       // silently overwrite an already-saved punch.
@@ -712,10 +783,11 @@ function DashboardPage() {
       )
         .select()
         .single();
-      if (error)
-        throw new Error(
-          `Attendance was not saved. ${error.message} Refresh your records before retrying.`,
-        );
+      if (error) {
+        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
+        throw new Error("Attendance was not saved. Check your connection and try again.");
+      }
+      if (!data) throw new AttendanceConflictError();
       if (data) {
         setRows((prev) => {
           const other = prev.filter((r) => r.entry_date !== key);
@@ -723,10 +795,14 @@ function DashboardPage() {
         });
       }
     } catch (error) {
+      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
+      setAttendanceConflict(conflict);
       setActionError(
-        error instanceof Error
-          ? error.message
-          : "Attendance was not saved. Check your connection and try again.",
+        conflict
+          ? ATTENDANCE_CONFLICT_MESSAGE
+          : error instanceof Error
+            ? error.message
+            : "Attendance was not saved. Check your connection and try again.",
       );
     } finally {
       attendanceLock.current = false;
@@ -736,15 +812,21 @@ function DashboardPage() {
 
   const undoLast = async () => {
     if (!userId || !today.id || attendanceLock.current) return;
-    if (!(await ensureActiveSession())) return;
-    const filled = ORDER.filter((p) => today[p]);
-    const last = filled[filled.length - 1];
-    if (!last) return;
-    if (!window.confirm(`Undo ${LABELS[last]} at ${fmtTime(today[last])} for today?`)) return;
     attendanceLock.current = true;
     setSavingAttendance(true);
     setActionError("");
+    setAttendanceConflict(false);
     try {
+      if (!(await ensureActiveSession())) return;
+      const filled = ORDER.filter((p) => today[p]);
+      const last = filled[filled.length - 1];
+      if (!last) return;
+      if (
+        !window.confirm(
+          `Undo ${LABELS[last]} recorded at ${fmtTime(today[last])}?\n\nThis removes the saved punch and reopens it as the next step.`,
+        )
+      )
+        return;
       let query = supabase
         .from("dtr_entries")
         .update(punchValue(last, null))
@@ -753,16 +835,21 @@ function DashboardPage() {
       for (const field of ORDER)
         query = today[field] ? query.eq(field, today[field]!) : query.is(field, null);
       const { data, error } = await query.select().single();
-      if (error)
-        throw new Error(
-          `Undo was not saved. ${error.message} Refresh your records before retrying.`,
-        );
+      if (error) {
+        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
+        throw new Error("Undo was not saved. Check your connection and try again.");
+      }
+      if (!data) throw new AttendanceConflictError();
       setRows((prev) => prev.map((r) => (r.id === data.id ? data : r)));
     } catch (error) {
+      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
+      setAttendanceConflict(conflict);
       setActionError(
-        error instanceof Error
-          ? error.message
-          : "Undo was not saved. Check your connection and try again.",
+        conflict
+          ? ATTENDANCE_CONFLICT_MESSAGE
+          : error instanceof Error
+            ? error.message
+            : "Undo was not saved. Check your connection and try again.",
       );
     } finally {
       attendanceLock.current = false;
@@ -781,6 +868,7 @@ function DashboardPage() {
     profileLock.current = true;
     setSavingProfile(true);
     setActionError("");
+    setAttendanceConflict(false);
     try {
       const { error } = await supabase
         .from("profiles")
@@ -834,6 +922,7 @@ function DashboardPage() {
   };
 
   const signOut = async () => {
+    setAttendanceConflict(false);
     const { error } = await supabase.auth.signOut();
     if (error) {
       setActionError(error.message);
@@ -972,21 +1061,39 @@ function DashboardPage() {
 
       <main className="mx-auto max-w-6xl space-y-4 px-3 py-5 sm:space-y-6 sm:px-6 sm:py-8">
         {actionError && (
-          <p
+          <div
             role="alert"
+            aria-live="assertive"
             className="rounded border border-red-200 bg-red-50 p-3 text-sm text-red-700"
           >
-            {actionError}
-          </p>
+            <p>{actionError}</p>
+            {attendanceConflict && (
+              <button
+                type="button"
+                onClick={() => window.location.reload()}
+                className="mt-2 rounded-md border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 underline-offset-2 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700"
+              >
+                Reload records
+              </button>
+            )}
+          </div>
         )}
         {loading ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500">
+          <div
+            role="status"
+            aria-live="polite"
+            aria-busy="true"
+            className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500"
+          >
             Loading…
           </div>
         ) : loadError ? (
           <div role="alert" className="rounded border border-red-200 bg-white p-5 text-red-700">
             <p>{loadError}</p>
-            <button className="mt-2 underline" onClick={() => window.location.reload()}>
+            <button
+              className="mt-2 rounded px-1 underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+              onClick={() => window.location.reload()}
+            >
               Reload records
             </button>
           </div>
@@ -1181,7 +1288,10 @@ function DashboardPage() {
             </section>
 
             {/* Punch card */}
-            <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6">
+            <section
+              aria-busy={savingAttendance}
+              className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6"
+            >
               <div className="mb-5 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                   Today · {fmtDate(key)}
@@ -1189,9 +1299,10 @@ function DashboardPage() {
                 <button
                   onClick={undoLast}
                   disabled={savingAttendance || !today.id || !ORDER.some((p) => today[p])}
-                  className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  aria-busy={savingAttendance}
+                  className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Undo last
+                  {savingAttendance ? "Saving…" : "Undo last"}
                 </button>
               </div>
 
@@ -1221,12 +1332,31 @@ function DashboardPage() {
                 })}
               </div>
 
+              {todayWarning ? (
+                <p
+                  role="alert"
+                  aria-live="assertive"
+                  className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+                >
+                  {todayWarning}
+                </p>
+              ) : today.id && nextPunch ? (
+                <p
+                  role="status"
+                  aria-live="polite"
+                  className="mt-4 rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-600"
+                >
+                  Day in progress · next step: {LABELS[nextPunch]}.
+                </p>
+              ) : null}
+
               <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
                 {nextPunch ? (
                   <button
                     onClick={() => punch(nextPunch)}
                     disabled={savingAttendance}
-                    className="w-full rounded-md bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:py-2.5"
+                    aria-busy={savingAttendance}
+                    className="w-full rounded-md bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:py-2.5"
                   >
                     {savingAttendance ? "Saving…" : `${LABELS[nextPunch]} now`}
                   </button>
@@ -1235,10 +1365,15 @@ function DashboardPage() {
                     Day complete · {computeHours(today).toFixed(2)} hrs
                   </div>
                 )}
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-slate-500" aria-live="polite">
                   Tap each button yourself — Break Out, Break In, and Check Out are no longer logged
                   automatically.
                 </span>
+                {savingAttendance && (
+                  <span role="status" aria-live="polite" className="text-xs text-slate-500">
+                    Saving attendance…
+                  </span>
+                )}
               </div>
             </section>
 
@@ -1462,6 +1597,8 @@ function AdminDashboard() {
   const [entries, setEntries] = useState<TraineeDtr[]>([]);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [entriesError, setEntriesError] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState("");
+  const [mutationConflict, setMutationConflict] = useState(false);
 
   const [search, setSearch] = useState("");
 
@@ -1606,6 +1743,8 @@ function AdminDashboard() {
     setProfileEditSuccess("");
     setStatusError("");
     setStatusSuccess("");
+    setMutationError("");
+    setMutationConflict(false);
     setEntries([]);
     setLoadingEntries(true);
     setEntriesError(null);
@@ -1626,21 +1765,46 @@ function AdminDashboard() {
 
   const deleteEntry = async (entryId: string) => {
     if (mutationLock.current) return;
-    if (!window.confirm("Delete this DTR entry? This cannot be undone.")) return;
+    const entry = entries.find((row) => row.id === entryId);
+    if (!entry) return;
+    if (
+      !window.confirm(
+        "Delete this entire DTR entry? This permanently removes all four punches for that date and cannot be undone.",
+      )
+    )
+      return;
     mutationLock.current = true;
     setMutating(true);
+    setMutationError("");
+    setMutationConflict(false);
     try {
-      const { error } = await supabase
+      let query = supabase
         .from("dtr_entries")
         .delete()
         .eq("id", entryId)
-        .select("id")
-        .single();
-      if (error) throw new Error(error.message);
+        .eq("user_id", entry.user_id)
+        .eq("entry_date", entry.entry_date);
+      // Delete only the exact attendance values the admin reviewed. A change
+      // in another session must require reloading and confirming again.
+      for (const field of ORDER) {
+        query = entry[field] ? query.eq(field, entry[field]!) : query.is(field, null);
+      }
+      const { data, error } = await query.select("id").single();
+      if (error) {
+        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
+        throw new Error("The DTR entry was not deleted. Check your connection and try again.");
+      }
+      if (!data) throw new AttendanceConflictError();
       setEntries((prev) => prev.filter((e) => e.id !== entryId));
     } catch (error) {
-      window.alert(
-        `Failed to delete: ${error instanceof Error ? error.message : "Check your connection and retry."}`,
+      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
+      setMutationConflict(conflict);
+      setMutationError(
+        conflict
+          ? "This DTR entry changed in another tab. Reload records before trying again. No changes were made."
+          : error instanceof Error
+            ? error.message
+            : "The DTR entry was not deleted. Check your connection and try again.",
       );
     } finally {
       mutationLock.current = false;
@@ -1653,24 +1817,41 @@ function AdminDashboard() {
     const entry = entries.find((r) => r.id === entryId);
     if (!entry?.[field]) return;
     if (
-      !window.confirm(`Clear ${LABELS[field]} at ${fmtTime(entry[field])} on ${entry.entry_date}?`)
+      !window.confirm(
+        `Clear ${LABELS[field]} recorded at ${fmtTime(entry[field])} on ${entry.entry_date}?\n\nThis removes that punch from the trainee's DTR and may make the day incomplete.`,
+      )
     )
       return;
     mutationLock.current = true;
     setMutating(true);
+    setMutationError("");
+    setMutationConflict(false);
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from("dtr_entries")
         .update(punchValue(field, null))
         .eq("id", entryId)
-        .eq(field, entry[field]!)
-        .select()
-        .single();
-      if (error) throw new Error(error.message);
+        .eq("user_id", entry.user_id);
+      for (const punchField of ORDER) {
+        query = entry[punchField]
+          ? query.eq(punchField, entry[punchField]!)
+          : query.is(punchField, null);
+      }
+      const { data, error } = await query.select().single();
+      if (error) {
+        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
+        throw new Error("The punch was not cleared. Check your connection and try again.");
+      }
       setEntries((prev) => prev.map((e) => (e.id === entryId ? data : e)));
     } catch (error) {
-      window.alert(
-        `Failed to update: ${error instanceof Error ? error.message : "Check your connection and retry."}`,
+      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
+      setMutationConflict(conflict);
+      setMutationError(
+        conflict
+          ? "This DTR entry changed in another tab. Reload records before trying again. No changes were made."
+          : error instanceof Error
+            ? error.message
+            : "The punch was not cleared. Check your connection and try again.",
       );
     } finally {
       mutationLock.current = false;
@@ -2406,6 +2587,24 @@ function AdminDashboard() {
                 </div>
               )}
             </div>
+            {mutationError && (
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="mb-3 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+              >
+                <p>{mutationError}</p>
+                {mutationConflict && (
+                  <button
+                    type="button"
+                    onClick={() => window.location.reload()}
+                    className="mt-2 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold underline-offset-2 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700"
+                  >
+                    Reload records
+                  </button>
+                )}
+              </div>
+            )}
             {selectedTrainee && entries.length > 0 && (
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <select
@@ -2504,7 +2703,8 @@ function AdminDashboard() {
                             <button
                               onClick={() => clearPunch(r.id!, p)}
                               title={`Clear ${LABELS[p]}`}
-                              className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                              aria-label={`Clear ${LABELS[p]} for ${r.entry_date}`}
+                              className="rounded px-1 text-[10px] font-medium text-slate-400 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
                             >
                               ✕
                             </button>
@@ -2544,7 +2744,8 @@ function AdminDashboard() {
                                 <button
                                   onClick={() => clearPunch(r.id!, p)}
                                   title={`Clear ${LABELS[p]}`}
-                                  className="text-[10px] font-medium text-slate-400 hover:text-red-600"
+                                  aria-label={`Clear ${LABELS[p]} for ${r.entry_date}`}
+                                  className="rounded px-1 text-[10px] font-medium text-slate-400 hover:text-red-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
                                 >
                                   ✕
                                 </button>
