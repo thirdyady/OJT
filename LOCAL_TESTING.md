@@ -191,5 +191,15 @@ Supabase Auth URL Configuration. Configure the organization's chosen SMTP
 provider there; do not put SMTP/admin secrets in Vite environment variables.
 The local inbox verifies the flow, not real external email delivery.
 
-Permanent account deletion is still not implemented. It must account for the
-existing cascading deletion of attendance records before it is considered.
+Milestone 5 production URL, recovery-session, email-template, and Resend SMTP
+configuration is documented in [AUTH_PRODUCTION.md](AUTH_PRODUCTION.md). The
+application derives each redirect from the host serving it, while Supabase's
+redirect allow-list remains the security boundary. A successful email recovery
+signs out the one-time recovery session and requires signing in with the new
+password; the signed-in Change password flow keeps its existing session.
+
+Milestone 6 permits permanent deletion only for unused non-admin trainee accounts.
+Deactivation remains the routine option. The DTR foreign key now rejects account
+deletion when history exists, including concurrent attendance writes. See
+[ACCOUNT_DELETION.md](ACCOUNT_DELETION.md) for the confirmation flow, database
+protection, manual tests, and migration-before-deployment instructions.

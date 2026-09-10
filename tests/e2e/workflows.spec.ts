@@ -311,17 +311,41 @@ test("forgot password requests a recovery email; recovery updates the password; 
   await page.getByRole("button", { name: "Forgot password?" }).click();
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
   await page.getByLabel("Email", { exact: true }).fill(email);
+  let recoveryRequestBody: Record<string, unknown> | undefined;
+  let recoveryRequestUrl = "";
+  page.on("request", (request) => {
+    if (request.url().includes("/auth/v1/recover") && request.method() === "POST") {
+      recoveryRequestUrl = request.url();
+      try {
+        recoveryRequestBody = JSON.parse(request.postData() || "{}");
+      } catch {
+        recoveryRequestBody = undefined;
+      }
+    }
+  });
   await page.getByRole("button", { name: "Send reset link" }).click();
   await expect(page.getByText(/If an account exists/)).toBeVisible();
+  const requestRedirect =
+    recoveryRequestBody?.redirect_to ||
+    (recoveryRequestUrl ? new URL(recoveryRequestUrl).searchParams.get("redirect_to") : null);
+  expect(requestRedirect).toBe("http://localhost:3000/reset-password?flow=recovery");
   const data = checked(
     await local.admin.auth.admin.generateLink({
       type: "recovery",
       email,
-      options: { redirectTo: "http://localhost:3000/reset-password" },
+      options: { redirectTo: "http://localhost:3000/reset-password?flow=recovery" },
     }),
   );
   await page.goto(data.properties.action_link);
   await waitForHydration(page);
+  await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+  await page.evaluate(async () => {
+    const path = "/src/integrations/supabase/client.ts";
+    const { supabase } = await import(/* @vite-ignore */ path);
+    const { error } = await supabase.auth.refreshSession();
+    if (error) throw error;
+  });
+  await page.reload();
   await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
   const newPassword = `Updated!${randomUUID()}`;
   await page.getByLabel("New password", { exact: true }).fill(newPassword);
@@ -331,6 +355,8 @@ test("forgot password requests a recovery email; recovery updates the password; 
   await page.getByLabel("Confirm new password", { exact: true }).fill(newPassword);
   await page.getByRole("button", { name: "Update password" }).click();
   await expect(page.getByRole("status")).toContainText("updated");
+  await expect(page.getByRole("status")).toContainText("Sign in with your new password");
+  await expect(page.getByRole("link", { name: "Back to sign in" })).toBeVisible();
   const client = local.client();
   checked(await client.auth.signInWithPassword({ email, password: newPassword }));
   await client.auth.signOut();
@@ -340,6 +366,130 @@ test("forgot password requests a recovery email; recovery updates the password; 
   await expect(page.getByRole("alert")).toContainText("Link expired");
   await expect(page.getByRole("button", { name: "Update password" })).toHaveCount(0);
 });
+
+test("signed-in change password keeps the session and rejects an invalid recovery link", async ({
+  page,
+}) => {
+  const changeEmail = `browser-change-${randomUUID()}@ojt.local.test`;
+  const changePassword = `Change!${randomUUID()}`;
+  const updatedPassword = `Changed!${randomUUID()}`;
+  let changeUserId: string | undefined;
+  try {
+    changeUserId = checked(
+      await local.admin.auth.admin.createUser({
+        email: changeEmail,
+        password: changePassword,
+        email_confirm: true,
+        user_metadata: {
+          full_name: "Change Password Trainee",
+          student_id: `CHANGE-${randomUUID()}`,
+          company: "PSA (change test)",
+          ojt_title: "Change Intern",
+        },
+      }),
+    ).user.id;
+
+    await page.goto("/auth");
+    await waitForHydration(page);
+    await page.getByLabel("Email", { exact: true }).fill(changeEmail);
+    await page.getByLabel("Password", { exact: true }).fill(changePassword);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("button", { name: /now$/ }).first()).toBeVisible();
+
+    await page.getByRole("link", { name: "Change password", exact: true }).click();
+    await waitForHydration(page);
+    await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+    await page.getByLabel("New password", { exact: true }).fill(updatedPassword);
+    await page.getByLabel("Confirm new password", { exact: true }).fill(updatedPassword);
+    await page.getByRole("button", { name: "Update password", exact: true }).click();
+    await expect(page.getByRole("status")).toContainText("Your password has been updated.");
+    await expect(page.getByRole("link", { name: "Continue to your dashboard" })).toBeVisible();
+    await page.getByRole("link", { name: "Continue to your dashboard" }).click();
+    await expect(page.getByRole("button", { name: /now$/ }).first()).toBeVisible();
+
+    await page.goto("/reset-password#error=access_denied&error_description=Link+expired");
+    await waitForHydration(page);
+    await expect(page.getByRole("alert")).toContainText("Link expired");
+    await expect(page.getByRole("button", { name: "Update password", exact: true })).toHaveCount(0);
+    await page.goto("/reset-password?flow=recovery");
+    await waitForHydration(page);
+    await expect(page.getByRole("alert")).toContainText("invalid or expired");
+    await expect(page.getByRole("button", { name: "Update password", exact: true })).toHaveCount(0);
+    await page.goto("/dashboard");
+    await expect(page.getByRole("button", { name: /now$/ }).first()).toBeVisible();
+  } finally {
+    if (changeUserId) checked(await local.admin.auth.admin.deleteUser(changeUserId));
+  }
+});
+
+for (const switchAccount of [false, true]) {
+  test(`recovery is invalidated after ${switchAccount ? "another account" : "the same account"} signs in`, async ({
+    page,
+  }) => {
+    const accounts: { id: string; email: string }[] = [];
+    const originalPassword = `Recovery!${randomUUID()}`;
+    try {
+      for (let i = 0; i < (switchAccount ? 2 : 1); i++) {
+        const email = `recovery-session-${randomUUID()}@ojt.local.test`;
+        const { user } = checked(
+          await local.admin.auth.admin.createUser({
+            email,
+            password: originalPassword,
+            email_confirm: true,
+          }),
+        );
+        accounts.push({ id: user.id, email });
+      }
+      const link = checked(
+        await local.admin.auth.admin.generateLink({
+          type: "recovery",
+          email: accounts[0].email,
+          options: { redirectTo: "http://localhost:3000/reset-password?flow=recovery" },
+        }),
+      );
+      await page.goto(link.properties.action_link);
+      await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+      await page.getByLabel("New password", { exact: true }).fill("ShouldNotBeSaved!123");
+      await page.getByLabel("Confirm new password", { exact: true }).fill("ShouldNotBeSaved!123");
+      const otherTab = await page.context().newPage();
+      await otherTab.goto("/auth");
+      await waitForHydration(otherTab);
+      await otherTab.evaluate(
+        async ({ email, password }) => {
+          const path = "/src/integrations/supabase/client.ts";
+          const { supabase } = await import(/* @vite-ignore */ path);
+          const logout = await supabase.auth.signOut();
+          if (logout.error) throw logout.error;
+          const login = await supabase.auth.signInWithPassword({ email, password });
+          if (login.error) throw login.error;
+        },
+        { email: accounts[switchAccount ? 1 : 0].email, password: originalPassword },
+      );
+      await expect(page.getByRole("button", { name: "Update password", exact: true })).toHaveCount(
+        0,
+      );
+      await expect(page.getByRole("alert")).toContainText("invalid or expired");
+      await page.reload();
+      await expect(page.getByRole("button", { name: "Update password", exact: true })).toHaveCount(
+        0,
+      );
+      await expect(page.getByRole("alert")).toContainText("invalid or expired");
+      for (const account of accounts) {
+        const client = local.client();
+        checked(
+          await client.auth.signInWithPassword({
+            email: account.email,
+            password: originalPassword,
+          }),
+        );
+        await client.auth.signOut();
+      }
+      await otherTab.close();
+    } finally {
+      for (const account of accounts) checked(await local.admin.auth.admin.deleteUser(account.id));
+    }
+  });
+}
 
 test("new trainee registration requires complete profile details", async ({ page }) => {
   const signupEmail = `browser-signup-${randomUUID()}@ojt.local.test`;
