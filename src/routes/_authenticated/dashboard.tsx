@@ -2,7 +2,20 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { createTraineeAccount, type CreatedTraineeProfile } from "@/lib/admin-account.functions";
+import {
+  createTraineeAccount,
+  deleteUnusedTraineeAccount,
+  type CreatedTraineeProfile,
+} from "@/lib/admin-account.functions";
+import {
+  AlertDialog,
+  AlertDialogContent,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogCancel,
+} from "@/components/ui/alert-dialog";
 import {
   calculateCompletedHours as computeHours,
   calculateCompletedHoursFromRecords,
@@ -1432,6 +1445,12 @@ function ProgressStat({ label, value }: { label: string; value: string }) {
 
 function AdminDashboard() {
   const createAccount = useServerFn(createTraineeAccount);
+  const deleteAccount = useServerFn(deleteUnusedTraineeAccount);
+  const [deletionTarget, setDeletionTarget] = useState<TraineeRow | null>(null);
+  const [deletionConfirmation, setDeletionConfirmation] = useState("");
+  const [deletingAccount, setDeletingAccount] = useState(false);
+  const [deletionError, setDeletionError] = useState("");
+  const [deletionSuccess, setDeletionSuccess] = useState("");
   const mutationLock = useRef(false);
   const requestVersion = useRef(0);
   const [mutating, setMutating] = useState(false);
@@ -1766,6 +1785,58 @@ function AdminDashboard() {
 
   const selectedTrainee = trainees.find((t) => t.id === selectedId);
 
+  const confirmAccountDeletion = async () => {
+    if (!deletionTarget || deletionConfirmation !== deletionTarget.id || mutationLock.current)
+      return;
+    const target = deletionTarget;
+    mutationLock.current = true;
+    setDeletingAccount(true);
+    setMutating(true);
+    setDeletionError("");
+    setDeletionSuccess("");
+    try {
+      const { deletedId } = await deleteAccount({
+        data: { targetUserId: target.id, confirmation: deletionConfirmation },
+      });
+      ++requestVersion.current;
+      setTrainees((current) => current.filter((trainee) => trainee.id !== deletedId));
+      setSelectedId(null);
+      setEntries([]);
+      setLoadingEntries(false);
+      setDeletionTarget(null);
+      setDeletionConfirmation("");
+      setDeletionSuccess(`Permanently deleted ${target.full_name || target.id}.`);
+    } catch (error) {
+      setDeletionError(
+        error instanceof Error
+          ? error.message
+          : "Deletion was not confirmed. Refresh before retrying.",
+      );
+      // The server may have committed before a response was lost. Reconcile
+      // with the database rather than claiming failure means nothing changed.
+      const refreshed = await supabase.from("profiles").select("*").order("full_name");
+      if (!refreshed.error && refreshed.data) {
+        setTrainees(refreshed.data);
+        if (!refreshed.data.some((trainee) => trainee.id === target.id)) {
+          ++requestVersion.current;
+          setSelectedId(null);
+          setEntries([]);
+          setLoadingEntries(false);
+          setDeletionTarget(null);
+          setDeletionError(
+            "Deletion response was not confirmed. The refreshed account list no longer contains this account.",
+          );
+        } else {
+          await loadEntries(target.id);
+        }
+      }
+    } finally {
+      mutationLock.current = false;
+      setDeletingAccount(false);
+      setMutating(false);
+    }
+  };
+
   const filteredTrainees = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return trainees;
@@ -1840,10 +1911,71 @@ function AdminDashboard() {
           Manage Accounts
         </h2>
         <p className="text-xs text-slate-500">
-          View trainee details and update permitted profile information. Account deletion is not
-          available here.
+          Use deactivation for routine removal; it preserves the trainee's profile and DTR history.
+          Permanent deletion is only available for trainee accounts with no DTR records.
         </p>
       </div>
+      {deletionSuccess && (
+        <p role="status" className="text-sm text-emerald-700">
+          {deletionSuccess}
+        </p>
+      )}
+      {deletionError && !deletionTarget && (
+        <p role="alert" className="text-sm text-red-700">
+          {deletionError}
+        </p>
+      )}
+      <AlertDialog
+        open={Boolean(deletionTarget)}
+        onOpenChange={(open) => {
+          if (!open && !deletingAccount) {
+            setDeletionTarget(null);
+            setDeletionConfirmation("");
+            setDeletionError("");
+          }
+        }}
+      >
+        <AlertDialogContent data-admin-delete-account-endpoint={deleteUnusedTraineeAccount.url}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Permanently delete trainee account?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes {deletionTarget?.full_name || "this trainee"}'s sign-in
+              account, profile, and authentication sessions. It cannot be undone. Accounts with any
+              DTR records are protected. Choose deactivation to retain the account instead.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="break-all text-sm">
+            Account ID: <strong>{deletionTarget?.id}</strong>
+          </p>
+          <label className="block text-sm">
+            Type the account ID to confirm
+            <input
+              value={deletionConfirmation}
+              onChange={(event) => setDeletionConfirmation(event.target.value)}
+              autoComplete="off"
+              disabled={deletingAccount}
+              className="mt-1 w-full rounded border p-2"
+            />
+          </label>
+          {deletionError && (
+            <p role="alert" className="text-sm text-red-700">
+              {deletionError}
+            </p>
+          )}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingAccount}>Cancel</AlertDialogCancel>
+            <button
+              onClick={confirmAccountDeletion}
+              disabled={
+                deletingAccount || !deletionTarget || deletionConfirmation !== deletionTarget.id
+              }
+              className="rounded bg-red-700 px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              {deletingAccount ? "Deleting..." : "Permanently delete account"}
+            </button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <form
         onSubmit={createAccountSubmit}
         data-admin-create-account-endpoint={createTraineeAccount.url}
@@ -1855,7 +1987,10 @@ function AdminDashboard() {
             Set the trainee&apos;s sign-in details and profile. The account is active immediately.
           </p>
         </div>
-        <fieldset disabled={creatingAccount} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <fieldset
+          disabled={creatingAccount || deletingAccount}
+          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+        >
           <label className="block">
             <span className="text-xs font-medium text-slate-600">Full Name</span>
             <input
@@ -2235,6 +2370,27 @@ function AdminDashboard() {
                       className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                     >
                       {savingProfile ? "Saving..." : "Save trainee profile"}
+                    </button>
+                    <button
+                      disabled={
+                        selectedTrainee.is_admin ||
+                        loadingEntries ||
+                        Boolean(entriesError) ||
+                        entries.length > 0 ||
+                        savingProfile ||
+                        savingStatus ||
+                        creatingAccount ||
+                        deletingAccount
+                      }
+                      onClick={() => {
+                        setDeletionTarget(selectedTrainee);
+                        setDeletionConfirmation("");
+                        setDeletionError("");
+                        setDeletionSuccess("");
+                      }}
+                      className="rounded-md border border-red-300 px-3 py-2 text-xs font-semibold text-red-700 disabled:opacity-50"
+                    >
+                      Delete unused account
                     </button>
                     {profileEditError && (
                       <p role="alert" className="text-xs text-red-600">

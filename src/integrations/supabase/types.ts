@@ -83,6 +83,10 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      dtr_delete_unused_trainee: {
+        Args: { actor_user_id: string; target_user_id: string; confirmation: string };
+        Returns: string;
+      };
       dtr_is_admin: { Args: never; Returns: boolean };
       dtr_is_active: { Args: never; Returns: boolean };
       dtr_admin_set_required_ojt_hours: {
