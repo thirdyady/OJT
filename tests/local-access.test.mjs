@@ -200,7 +200,10 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     await a.auth.signOut();
     await b.auth.signOut();
   } finally {
-    for (const user of users) checked(await local.admin.auth.admin.deleteUser(user.id));
+    for (const user of users) {
+      checked(await local.admin.from("dtr_entries").delete().eq("user_id", user.id));
+      checked(await local.admin.auth.admin.deleteUser(user.id));
+    }
   }
 });
 

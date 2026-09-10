@@ -105,7 +105,7 @@ pre-confirmed. Stop the stack with `npx --yes supabase stop` when finished.
    a duplicate email and invalid/blank fields; each should be rejected without
    creating another account. A regular trainee must not see this form.
 9. While still an admin, cancel and accept a punch-clear confirmation, and test
-   deletion on sample attendance. Account deletion should not be offered.
+   deletion on sample attendance. Accounts with DTR history must not be deletable.
 10. Verify month/year filtering, CSV, print preview, and Word export still work.
    Yesterday's seeded sample is eight hours; select the previous month if today
    is the first of a month.

@@ -15,8 +15,16 @@ export function localSupabase() {
   if (url.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(url.hostname)) {
     throw new Error("Refusing to seed or test a non-local Supabase database.");
   }
+  const databaseUrl = new URL(status.DB_URL);
+  if (
+    !["postgres:", "postgresql:"].includes(databaseUrl.protocol) ||
+    !["localhost", "127.0.0.1"].includes(databaseUrl.hostname)
+  ) {
+    throw new Error("Refusing a non-local PostgreSQL connection.");
+  }
   const options = { auth: { persistSession: false, autoRefreshToken: false } };
   return {
+    databaseUrl: status.DB_URL,
     url: status.API_URL,
     publicKey: status.ANON_KEY || status.PUBLISHABLE_KEY,
     serviceRoleKey: status.SERVICE_ROLE_KEY || status.SECRET_KEY,

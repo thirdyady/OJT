@@ -49,6 +49,7 @@ test.beforeAll(async () => {
   );
 });
 test.afterAll(async () => {
+  if (userId) checked(await local.admin.from("dtr_entries").delete().eq("user_id", userId));
   if (userId) checked(await local.admin.auth.admin.deleteUser(userId));
   if (adminId) checked(await local.admin.auth.admin.deleteUser(adminId));
   if (createdUserId) checked(await local.admin.auth.admin.deleteUser(createdUserId));
