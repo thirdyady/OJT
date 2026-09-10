@@ -92,3 +92,30 @@ export const createTraineeAccount = createServerFn({ method: "POST" })
       );
     }
   });
+
+export const deleteUnusedTraineeAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(z.object({ targetUserId: z.string().uuid(), confirmation: z.string().uuid() }))
+  .handler(async ({ data, context }): Promise<{ deletedId: string }> => {
+    const { data: isAdmin, error: roleError } = await context.supabase.rpc("dtr_is_admin");
+    if (roleError || !isAdmin) {
+      throw new Error("Only active DTR administrators can delete trainee accounts.");
+    }
+    if (context.userId === data.targetUserId) {
+      throw new Error("You cannot delete your own account.");
+    }
+    if (data.confirmation !== data.targetUserId) {
+      throw new Error("Type the exact account ID to confirm deletion.");
+    }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data: deletedId, error } = await supabaseAdmin.rpc("dtr_delete_unused_trainee", {
+      actor_user_id: context.userId,
+      target_user_id: data.targetUserId,
+      confirmation: data.confirmation,
+    });
+    if (error) throw new Error(`Deletion was not confirmed. ${error.message}`);
+    if (deletedId !== data.targetUserId) {
+      throw new Error("Deletion was not confirmed. Refresh the account list before retrying.");
+    }
+    return { deletedId };
+  });
