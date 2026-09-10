@@ -55,6 +55,13 @@ test.afterAll(async () => {
   if (createdUserId) checked(await local.admin.auth.admin.deleteUser(createdUserId));
 });
 
+test("the root URL redirects signed-out visitors to sign in", async ({ page }) => {
+  await page.goto("/");
+  await waitForHydration(page);
+  await expect(page).toHaveURL(/\/auth$/);
+  await expect(page.getByRole("heading", { name: "Sign in to your DTR" })).toBeVisible();
+});
+
 test("attendance persists, failed writes stay unsaved, undo needs confirmation, admin can edit, inspect and clear", async ({
   page,
 }) => {
@@ -96,7 +103,10 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await page.getByRole("button", { name: "Check In now", exact: true }).click();
   await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
   await stalePage.getByRole("button", { name: "Check In now", exact: true }).click();
-  await expect(stalePage.getByRole("alert")).toContainText("not saved");
+  await expect(stalePage.getByRole("alert")).toContainText("out of date");
+  await expect(
+    stalePage.getByRole("button", { name: "Reload records", exact: true }),
+  ).toBeVisible();
   await stalePage.close();
   await page.reload();
   await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
@@ -559,6 +569,7 @@ test("legacy incomplete profiles can be completed without losing DTR access", as
     await expect(page.getByRole("status")).toHaveCount(0);
     await page.getByLabel("Required OJT hours", { exact: true }).fill("486");
     await page.getByRole("button", { name: "Save target", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Save target", exact: true })).toHaveCount(0);
     await expect(page.getByLabel("Required OJT hours", { exact: true })).toHaveValue("486");
     const profile = checked(
       await local.admin
