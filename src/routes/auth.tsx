@@ -1,6 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import { getEmailConfirmationRedirectUrl, getPasswordRecoveryRedirectUrl } from "@/lib/auth-urls";
 import psaImage from "../../assets/psa.jpg";
 
 export const Route = createFileRoute("/auth")({
@@ -41,7 +42,7 @@ function AuthPage() {
     try {
       if (mode === "forgot") {
         const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: `${window.location.origin}/reset-password`,
+          redirectTo: getPasswordRecoveryRedirectUrl(),
         });
         if (error) throw error;
         setMsg({
@@ -53,7 +54,7 @@ function AuthPage() {
           email: email.trim(),
           password,
           options: {
-            emailRedirectTo: window.location.origin,
+            emailRedirectTo: getEmailConfirmationRedirectUrl(),
             data: {
               full_name: fullName.trim(),
               student_id: studentId.trim(),
@@ -191,6 +192,8 @@ function AuthPage() {
                 className={`rounded-md px-3 py-2 text-sm ${
                   msg.kind === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"
                 }`}
+                role={msg.kind === "error" ? "alert" : "status"}
+                aria-live="polite"
               >
                 {msg.text}
               </div>

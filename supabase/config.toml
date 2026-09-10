@@ -2,7 +2,7 @@ project_id = "ixbudvpdrdagshhtlhjz"
 
 [auth]
 site_url = "http://localhost:3000"
-additional_redirect_urls = ["http://localhost:3000/reset-password"]
+additional_redirect_urls = ["http://localhost:3000/reset-password", "http://localhost:3000/reset-password?flow=recovery"]
 
 [auth.email]
 enable_confirmations = true
