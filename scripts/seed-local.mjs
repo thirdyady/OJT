@@ -23,7 +23,12 @@ for (const [role, email, name] of [
           email,
           password,
           email_confirm: true,
-          user_metadata: { full_name: name },
+          user_metadata: {
+            full_name: name,
+            student_id: `TEST-${role}`,
+            company: "PSA (local test)",
+            ojt_title: role === "admin" ? "DTR Administrator" : "Test Intern",
+          },
         }),
   );
   accounts[role] = { email, password, id: user.id };

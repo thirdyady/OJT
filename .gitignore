@@ -15,7 +15,12 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-.local-test-accounts.json
+.local-test-accounts*
+.env
+.env.*
+!.env.example
+!.env.*.example
+.vercel/
 test-results/
 playwright-report/
 supabase/.temp/

@@ -3,6 +3,13 @@
 This setup runs the existing frontend against a separate Supabase database on
 your PC. It does not create hosted admin accounts or change hosted data.
 
+For the final attendance security fixes, approved rules, and coordinated
+migration/deployment steps, see [FINAL_HARDENING.md](FINAL_HARDENING.md).
+Trainee punches now use the server-time RPC; direct trainee DTR writes are denied.
+Production packaging and credential exclusions are documented in
+[DEPLOYMENT.md](DEPLOYMENT.md). Local credentials remain on disk but are not
+tracked or uploaded with the app.
+
 ## Start
 
 From the `OJT` folder, with Docker Desktop running:

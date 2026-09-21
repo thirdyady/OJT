@@ -1,5 +1,8 @@
 # Authentication production setup
 
+Use [DEPLOYMENT.md](DEPLOYMENT.md) for the complete release checklist,
+environment guard, migration order, and rollback considerations.
+
 Milestone 5 keeps password recovery and change password in the browser Supabase
 client. The browser sends only the public Supabase URL and publishable key. The
 recovery page accepts a reset link only after Supabase emits a
@@ -29,11 +32,11 @@ In **Authentication → URL Configuration**:
    `https://dtr.example.gov.ph`.
 2. Add the exact production recovery path:
    `https://dtr.example.gov.ph/reset-password?flow=recovery`.
-3. Add the local path while local testing is needed:
-   `http://localhost:3000/reset-password?flow=recovery`.
-4. Add the production and local origins if email confirmation is enabled,
+3. Keep `http://localhost:3000/reset-password?flow=recovery` in the **local**
+   Supabase configuration. Use a separate staging project for previews.
+4. Add the production origin if email confirmation is enabled,
    because signup redirects to the app origin:
-   `https://dtr.example.gov.ph` and `http://localhost:3000`. Add an exact
+   `https://dtr.example.gov.ph`. Add an exact
    preview URL or a narrowly scoped preview wildcard ending in `/**` only when
    the deployment uses previews.
 5. Do not add arbitrary origins or a global `*` wildcard. Supabase checks each
@@ -44,9 +47,10 @@ localhost, a preview host, and the canonical domain. Every origin that can host
 the app still needs to be explicitly allow-listed in Supabase. See the
 [Supabase redirect URL guide](https://supabase.com/docs/guides/auth/redirect-urls).
 
-Keep the reset email template's `{{ .ConfirmationURL }}` unless a custom
-template is required. If a custom template constructs its own destination, use
-`{{ .RedirectTo }}` so the redirect passed by the app is retained. See
+Keep the reset email template's `{{ .ConfirmationURL }}` verification link.
+A custom verification URL must preserve its token/type and use
+`{{ .RedirectTo }}` as the redirect destination; a bare RedirectTo link does
+not verify the email or establish a recovery session. See
 [Supabase email templates](https://supabase.com/docs/guides/auth/auth-email-templates).
 
 ## Resend SMTP
@@ -60,8 +64,9 @@ SMTP is configured outside this repository:
    port (587 is the usual STARTTLS choice), username (`resend`), the Resend API
    key as the SMTP password, and the verified From address/name.
 3. Keep link tracking disabled for authentication messages so reset URLs are
-   not rewritten or consumed by scanners. Review Auth email rate limits and
-   CAPTCHA settings before launch.
+   not rewritten or consumed by scanners. Review Auth email rate limits before
+   launch. The app does not currently supply CAPTCHA tokens; do not enable a
+   CAPTCHA requirement without compatible app changes and staging tests.
 4. Send a real confirmation and recovery message to a controlled mailbox and
    open the links on the deployed domain.
 
