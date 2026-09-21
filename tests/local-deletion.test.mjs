@@ -21,7 +21,17 @@ async function fixture(run) {
     for (const isAdmin of [true, false]) {
       const email = `${randomUUID()}@ojt.local.test`;
       const { user } = checked(
-        await local.admin.auth.admin.createUser({ email, password, email_confirm: true }),
+        await local.admin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            full_name: "Deletion Test",
+            student_id: "TEST",
+            company: "PSA",
+            ojt_title: "Test",
+          },
+        }),
       );
       users.push({ id: user.id, email, password });
       checked(await local.admin.from("profiles").update({ is_admin: isAdmin }).eq("id", user.id));

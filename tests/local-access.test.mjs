@@ -11,7 +11,12 @@ test("local RLS separates trainees, permits admin attendance management, and pre
       const email = `${role}-${randomUUID()}@ojt.local.test`;
       const password = `Test!${randomUUID()}`;
       const { user } = checked(
-        await local.admin.auth.admin.createUser({ email, password, email_confirm: true }),
+        await local.admin.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { full_name: role, student_id: "TEST", company: "PSA", ojt_title: "Test" },
+        }),
       );
       users.push({ ...user, role, password });
       checked(
@@ -62,7 +67,7 @@ test("local RLS separates trainees, permits admin attendance management, and pre
       [],
     );
     const own = checked(
-      await a
+      await local.admin
         .from("dtr_entries")
         .insert({ user_id: trainee.id, entry_date: "2000-01-02" })
         .select()
@@ -71,14 +76,17 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     assert.ok(
       (await a.from("dtr_entries").insert({ user_id: trainee.id, entry_date: "2000-01-02" })).error,
     );
-    checked(
-      await a
-        .from("dtr_entries")
-        .update({ check_in: "2000-01-02T00:00:00Z" })
-        .eq("id", own.id)
-        .select()
-        .single(),
+    assert.deepEqual(
+      checked(
+        await a
+          .from("dtr_entries")
+          .update({ check_in: "2000-01-02T00:00:00Z" })
+          .eq("id", own.id)
+          .select(),
+      ),
+      [],
     );
+    assert.deepEqual(checked(await a.from("dtr_entries").delete().eq("id", own.id).select()), []);
     assert.equal(
       checked(await b.from("dtr_entries").select().eq("id", entry.id).single()).id,
       entry.id,
@@ -89,6 +97,9 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     );
     const editedProfile = checked(
       await b.rpc("dtr_admin_update_trainee_profile", {
+        expected_updated_at: checked(
+          await b.from("profiles").select("updated_at").eq("id", trainee.id).single(),
+        ).updated_at,
         target_user_id: trainee.id,
         new_full_name: "Admin edited trainee",
         new_student_id: "ADMIN-EDIT-001",
@@ -179,6 +190,7 @@ test("local RLS separates trainees, permits admin attendance management, and pre
     assert.ok(
       (
         await a.rpc("dtr_admin_update_trainee_profile", {
+          expected_updated_at: new Date().toISOString(),
           target_user_id: other.id,
           new_full_name: "Trainee cannot edit this",
           new_student_id: "NOPE",

@@ -34,6 +34,16 @@ test.beforeAll(async () => {
       check_out: "2000-01-03T17:00:00+08:00",
     }),
   );
+  checked(
+    await local.admin.from("dtr_entries").insert({
+      user_id: users[1].id,
+      entry_date: "2000-02-03",
+      check_in: "2000-02-03T09:00:00+08:00",
+      break_out: null,
+      break_in: null,
+      check_out: "2000-02-03T16:00:00+08:00",
+    }),
+  );
 });
 
 test.afterAll(async () => {
@@ -122,6 +132,64 @@ test("print and Word exports treat HTML in a trainee name as literal text", asyn
   }
 });
 
+test("reports keep the selected month, totals, OJT title, and trainee-only data consistent", async ({
+  page,
+}) => {
+  await login(page, 0);
+  await page.getByRole("button", { name: /^Regression A\b/ }).click();
+  await page.getByLabel("Select month to view/print/download").selectOption("0");
+  await page.getByLabel("Select year to view/print/download").selectOption("2000");
+  await expect(page.getByText(/January 2000.*Total: 8\.00 hrs across 1 day/)).toBeVisible();
+
+  const csvDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  const csv = await readFile((await (await csvDownload).path())!, "utf8");
+  expect(csv).toContain("2000-01-03");
+  expect(csv).not.toContain("2000-02-03");
+  expect(csv).toContain('"8.00"');
+  expect(csv).not.toMatch(/is_admin|is_active|required_ojt_hours/);
+
+  await page.getByRole("button", { name: "Print DTR", exact: true }).click();
+  await expect(page.frameLocator("iframe").locator(".profile-line").first()).toHaveText(
+    "OJT Title: Regression A",
+  );
+  await expect(page.frameLocator("iframe").locator(".month-line").first()).toHaveText(
+    /January 2000/,
+  );
+  await expect(page.frameLocator("iframe").locator(".total-line").first()).toHaveText(
+    /Monthly total: 8\.00 hrs/,
+  );
+  await expect(page.frameLocator("iframe").locator("body")).not.toContainText("February 2000");
+
+  const wordDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download Word", exact: true }).click();
+  const word = await readFile((await (await wordDownload).path())!, "utf8");
+  expect(word).toContain("January 2000");
+  expect(word).toContain("OJT Title: <strong>Regression A</strong>");
+  expect(word).toContain("Monthly total: <strong>8.00 hrs</strong>");
+  expect(word).not.toContain("February 2000");
+  expect(word).not.toMatch(/is_admin|is_active|required_ojt_hours/);
+
+  await page.getByLabel("Select month to view/print/download").selectOption("1");
+  await expect(page.getByText(/February 2000.*Total: 7\.00 hrs across 1 day/)).toBeVisible();
+  const februaryCsvDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  const februaryCsv = await readFile((await (await februaryCsvDownload).path())!, "utf8");
+  expect(februaryCsv).toContain("2000-02-03");
+  expect(februaryCsv).not.toContain("2000-01-03");
+  expect(februaryCsv).toContain('"7.00"');
+
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await login(page, 1);
+  await page.getByLabel("Select month to view/download").selectOption("0");
+  await page.getByLabel("Select year to view/download").selectOption("2000");
+  const traineeCsvDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export CSV", exact: true }).click();
+  const traineeCsv = await readFile((await (await traineeCsvDownload).path())!, "utf8");
+  expect(traineeCsv).toContain("2000-01-03");
+  expect(traineeCsv).not.toMatch(/is_admin|is_active|required_ojt_hours|Regression Admin/);
+});
+
 test("clearing a break keeps admin, trainee, CSV and progress hours consistent", async ({
   page,
 }) => {
@@ -139,7 +207,7 @@ test("clearing a break keeps admin, trainee, CSV and progress hours consistent",
   await page.getByLabel("Select year to view/download").selectOption("2000");
   await expect(page.getByRole("progressbar", { name: "OJT completion" })).toHaveAttribute(
     "aria-valuenow",
-    "0",
+    "87.5",
   );
   const downloadEvent = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export CSV", exact: true }).click();

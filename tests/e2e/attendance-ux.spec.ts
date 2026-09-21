@@ -55,7 +55,12 @@ test.beforeEach(async () => {
         email: adminEmail,
         password,
         email_confirm: true,
-        user_metadata: { full_name: "Attendance UX Admin" },
+        user_metadata: {
+          full_name: "Attendance UX Admin",
+          student_id: "ADMIN",
+          company: "PSA",
+          ojt_title: "Admin",
+        },
       }),
     ).user.id,
     email: adminEmail,
@@ -83,7 +88,7 @@ test("rapid clicks save once, the full sequence works, and undo confirms every s
   const checkIn = page.getByRole("button", { name: "Check In now", exact: true });
   let writes = 0;
   page.on("request", (request) => {
-    if (request.url().includes("/rest/v1/dtr_entries") && request.method() === "POST") writes++;
+    if (request.url().includes("/rest/v1/rpc/dtr_punch") && request.method() === "POST") writes++;
   });
 
   await checkIn.dblclick();
@@ -121,14 +126,14 @@ test("failed saves remain unsaved and stale tabs get an explicit reload action",
   page,
 }) => {
   await login(page, trainee);
-  await page.route("**/rest/v1/dtr_entries*", async (route) => {
+  await page.route("**/rest/v1/rpc/dtr_punch", async (route) => {
     if (route.request().method() === "POST") return route.abort("failed");
     return route.continue();
   });
   await page.getByRole("button", { name: "Check In now", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Attendance was not saved");
   await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeEnabled();
-  await page.unroute("**/rest/v1/dtr_entries*");
+  await page.unroute("**/rest/v1/rpc/dtr_punch");
 
   const stalePage = await page.context().newPage();
   await stalePage.goto("/dashboard");

@@ -33,7 +33,17 @@ test.beforeAll(async () => {
     }),
   ).user.id;
   adminId = checked(
-    await local.admin.auth.admin.createUser({ email: adminEmail, password, email_confirm: true }),
+    await local.admin.auth.admin.createUser({
+      email: adminEmail,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        full_name: "Browser Admin",
+        student_id: "ADMIN",
+        company: "PSA",
+        ojt_title: "Admin",
+      },
+    }),
   ).user.id;
   checked(await local.admin.from("profiles").update({ is_admin: true }).eq("id", adminId));
   checked(await local.admin.from("profiles").update({ required_ojt_hours: 8 }).eq("id", userId));
@@ -79,7 +89,7 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await expect(page.getByText("OJT target reached!")).toBeVisible();
   await page.getByLabel("Student ID", { exact: true }).fill(updatedStudentId);
   await page.route("**/rest/v1/profiles*", async (route) => {
-    if (route.request().method() === "POST") await route.abort("failed");
+    if (route.request().method() === "PATCH") await route.abort("failed");
     else await route.continue();
   });
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -92,14 +102,14 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await stalePage.goto("/dashboard");
   await waitForHydration(stalePage);
   await expect(stalePage.getByRole("button", { name: "Check In now", exact: true })).toBeVisible();
-  await page.route("**/rest/v1/dtr_entries*", async (route) => {
+  await page.route("**/rest/v1/rpc/dtr_punch", async (route) => {
     if (route.request().method() === "POST") await route.abort("failed");
     else await route.continue();
   });
   await page.getByRole("button", { name: "Check In now", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("not saved");
   await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeEnabled();
-  await page.unroute("**/rest/v1/dtr_entries*");
+  await page.unroute("**/rest/v1/rpc/dtr_punch");
   await page.getByRole("button", { name: "Check In now", exact: true }).click();
   await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
   await stalePage.getByRole("button", { name: "Check In now", exact: true }).click();
@@ -447,6 +457,12 @@ for (const switchAccount of [false, true]) {
             email,
             password: originalPassword,
             email_confirm: true,
+            user_metadata: {
+              full_name: "Recovery Test",
+              student_id: "TEST",
+              company: "PSA",
+              ojt_title: "Intern",
+            },
           }),
         );
         accounts.push({ id: user.id, email });
@@ -551,9 +567,21 @@ test("legacy incomplete profiles can be completed without losing DTR access", as
         email: legacyEmail,
         password: legacyPassword,
         email_confirm: true,
-        user_metadata: { full_name: "Legacy Incomplete Trainee" },
+        user_metadata: {
+          full_name: "Legacy Incomplete Trainee",
+          student_id: "TEST",
+          company: "PSA",
+          ojt_title: "Intern",
+        },
       }),
     ).user.id;
+    // Simulate an existing incomplete profile; new registrations must be complete.
+    checked(
+      await local.admin
+        .from("profiles")
+        .update({ student_id: null, company: null, ojt_title: null })
+        .eq("id", legacyUserId),
+    );
     await page.goto("/auth");
     await waitForHydration(page);
     await page.getByLabel("Email", { exact: true }).fill(legacyEmail);
