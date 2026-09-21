@@ -83,6 +83,19 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      dtr_punch: {
+        Args: {
+          action: string;
+          expected_date: string;
+          expected_id: string | null;
+          expected_check_in: string | null;
+          expected_break_out: string | null;
+          expected_break_in: string | null;
+          expected_check_out: string | null;
+          undo?: boolean;
+        };
+        Returns: Database["public"]["Tables"]["dtr_entries"]["Row"];
+      };
       dtr_delete_unused_trainee: {
         Args: { actor_user_id: string; target_user_id: string; confirmation: string };
         Returns: string;
@@ -95,6 +108,7 @@ export type Database = {
       };
       dtr_admin_update_trainee_profile: {
         Args: {
+          expected_updated_at: string;
           new_company: string | null;
           new_full_name: string | null;
           new_ojt_title: string | null;

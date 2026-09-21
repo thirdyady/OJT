@@ -50,6 +50,9 @@ function AuthPage() {
           text: "If an account exists for this email, a password reset link has been sent. Check your inbox.",
         });
       } else if (mode === "signup") {
+        if (![fullName, studentId, company, ojtTitle].every((value) => value.trim())) {
+          throw new Error("Complete all required trainee details. Spaces alone are not valid.");
+        }
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
           password,

@@ -22,6 +22,13 @@ import {
   calculateOjtProgress,
 } from "@/lib/ojt-progress.mjs";
 import psaLogo from "../../../assets/psa-logo.webp";
+import { loadDtrRows, loadProfiles } from "@/lib/dtr-data";
+import {
+  ATTENDANCE_TIME_ZONE,
+  attendanceDate,
+  attendanceMonth,
+  attendanceYear,
+} from "@/lib/dtr-time";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
@@ -53,7 +60,13 @@ type DtrRow = {
   check_out: string | null;
 };
 
+type DtrReportProfile = {
+  fullName: string;
+  ojtTitle: string | null;
+};
+
 type Profile = {
+  updated_at: string;
   full_name: string | null;
   student_id: string | null;
   company: string | null;
@@ -64,6 +77,7 @@ type Profile = {
 };
 
 type TraineeRow = {
+  updated_at: string;
   id: string;
   full_name: string | null;
   student_id: string | null;
@@ -100,6 +114,7 @@ function isAttendanceConflict(error: unknown): boolean {
   return (
     code === "PGRST116" ||
     code === "23505" ||
+    code === "40001" ||
     /no rows|0 rows|multiple \(or no\) rows|duplicate key/i.test(message)
   );
 }
@@ -165,13 +180,13 @@ const MONTHS = [
 ];
 
 function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return attendanceDate();
 }
 
 function fmtTime(iso?: string | null) {
   if (!iso) return "—";
   return new Date(iso).toLocaleTimeString([], {
+    timeZone: ATTENDANCE_TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -179,7 +194,8 @@ function fmtTime(iso?: string | null) {
 
 function fmtDate(key: string) {
   const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+  return new Date(Date.UTC(y, m - 1, d)).toLocaleDateString(undefined, {
+    timeZone: "UTC",
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -202,6 +218,7 @@ function escapeHtml(value: string) {
 function hhmm(iso: string | null): string {
   if (!iso) return "";
   return new Date(iso).toLocaleTimeString([], {
+    timeZone: ATTENDANCE_TIME_ZONE,
     hour: "2-digit",
     minute: "2-digit",
     hour12: true,
@@ -218,12 +235,15 @@ function filterRowsByMonth<T extends DtrRow>(
   targetYear: number,
 ): T[] {
   return rows.filter((r) => {
-    const d = new Date(r.entry_date + "T00:00:00");
-    return d.getMonth() === targetMonth && d.getFullYear() === targetYear;
+    return (
+      Number(r.entry_date.slice(5, 7)) - 1 === targetMonth &&
+      Number(r.entry_date.slice(0, 4)) === targetYear
+    );
   });
 }
 
 const EMPTY_PROFILE: Profile = {
+  updated_at: "",
   full_name: "",
   student_id: "",
   company: "",
@@ -247,22 +267,24 @@ function missingProfileFields(profile: Profile): string[] {
 // the trainee's own dashboard AND the admin's per-trainee view can generate
 // the same printable/downloadable DTR document.
 function buildDtrHtmlFor(
-  fullName: string,
+  profile: DtrReportProfile,
   rows: DtrRow[],
   targetMonth: number,
   targetYear: number,
 ) {
+  const fullName = profile.fullName;
+  const ojtTitle = profile.ojtTitle?.trim() || "Not provided";
+  const visibleRows = filterRowsByMonth(rows, targetMonth, targetYear);
   const byDay: Record<number, DtrRow> = {};
-  for (const r of rows) {
-    const d = new Date(r.entry_date + "T00:00:00");
-    if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
-      byDay[d.getDate()] = r;
-    }
+  for (const r of visibleRows) {
+    const day = Number(r.entry_date.slice(-2));
+    if (Number.isInteger(day)) byDay[day] = r;
   }
+  const totalHours = visibleRows.reduce((sum, row) => sum + computeHours(row), 0);
 
-  const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const daysInMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
   const isWeekend = (day: number) => {
-    const dow = new Date(targetYear, targetMonth, day).getDay();
+    const dow = new Date(Date.UTC(targetYear, targetMonth, day)).getUTCDay();
     return dow === 0 || dow === 6;
   };
 
@@ -294,6 +316,7 @@ function buildDtrHtmlFor(
       <div class="name-block">
         <div class="name-value">${escapeHtml(fullName)}</div>
       </div>
+      <div class="profile-line">OJT Title: <strong>${escapeHtml(ojtTitle)}</strong></div>
       <div class="month-line">For the month of: &nbsp;<strong>${monthLabel}</strong></div>
       <table>
         <thead>
@@ -309,6 +332,7 @@ function buildDtrHtmlFor(
         </thead>
         <tbody>${rows31.join("")}</tbody>
       </table>
+      <div class="total-line">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong></div>
       <div class="cert">
         I CERTIFY on my honor that above is a true and correct<br/>
         report of the hours of work performed, record of which was made<br/>
@@ -340,12 +364,14 @@ function buildDtrHtmlFor(
     .name-block { text-align: center; margin-bottom: 1px; }
     .name-value { font-size: 12px; font-weight: bold; border-bottom: 1px solid #000; display: inline-block; min-width: 160px; padding: 0 8px; text-align: center; }
     .name-label { font-size: 8px; text-align: center; color: #c00; margin-bottom: 5px; }
+    .profile-line { font-size: 8px; text-align: center; margin-bottom: 3px; }
     .month-line { font-size: 9px; margin-bottom: 5px; }
     .month-line strong { font-weight: bold; }
     table { width: 100%; border-collapse: collapse; }
     table, th, td { border: 1px solid #000; }
     th { font-size: 8px; text-align: center; padding: 2px 0; font-weight: bold; }
     td { height: 13px; }
+    .total-line { font-size: 8px; text-align: right; margin-top: 4px; }
     .cert { font-size: 8px; margin-top: 10px; line-height: 1.6; text-align: center; }
     .trainee-sig { margin-top: 10px; text-align: center; }
     .trainee-sig .sig-line { border-top: 1px solid #000; width: 80%; margin: 0 auto 2px; }
@@ -373,8 +399,13 @@ function buildDtrHtmlFor(
   return { html, monthLabel };
 }
 
-function printDtrFor(fullName: string, rows: DtrRow[], targetMonth: number, targetYear: number) {
-  const { html } = buildDtrHtmlFor(fullName, rows, targetMonth, targetYear);
+function printDtrFor(
+  profile: DtrReportProfile,
+  rows: DtrRow[],
+  targetMonth: number,
+  targetYear: number,
+) {
+  const { html } = buildDtrHtmlFor(profile, rows, targetMonth, targetYear);
   const iframe = document.createElement("iframe");
   // Allow printing and parent access, but never scripts in the generated document.
   iframe.setAttribute("sandbox", "allow-same-origin allow-modals");
@@ -388,24 +419,26 @@ function printDtrFor(fullName: string, rows: DtrRow[], targetMonth: number, targ
 }
 
 function downloadWordDtrFor(
-  fullName: string,
+  profile: DtrReportProfile,
   rows: DtrRow[],
   targetMonth: number,
   targetYear: number,
 ) {
+  const fullName = profile.fullName;
+  const ojtTitle = profile.ojtTitle?.trim() || "Not provided";
+  const visibleRows = filterRowsByMonth(rows, targetMonth, targetYear);
   const monthLabel = `${MONTHS[targetMonth]} ${targetYear}`;
 
   const byDay: Record<number, DtrRow> = {};
-  for (const r of rows) {
-    const d = new Date(r.entry_date + "T00:00:00");
-    if (d.getMonth() === targetMonth && d.getFullYear() === targetYear) {
-      byDay[d.getDate()] = r;
-    }
+  for (const r of visibleRows) {
+    const day = Number(r.entry_date.slice(-2));
+    if (Number.isInteger(day)) byDay[day] = r;
   }
+  const totalHours = visibleRows.reduce((sum, row) => sum + computeHours(row), 0);
 
-  const daysInMonth = new Date(targetYear, targetMonth + 1, 0).getDate();
+  const daysInMonth = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate();
   const isWeekend = (day: number) => {
-    const dow = new Date(targetYear, targetMonth, day).getDay();
+    const dow = new Date(Date.UTC(targetYear, targetMonth, day)).getUTCDay();
     return dow === 0 || dow === 6;
   };
 
@@ -469,6 +502,15 @@ function downloadWordDtrFor(
 </tr>
 <tr>
   <td colspan="5" style="
+    text-align:center;
+    font-size:8pt;
+    border:none;
+    padding:2px 0 1px;
+    font-family:Arial,sans-serif;
+  ">OJT Title: <strong>${escapeHtml(ojtTitle)}</strong></td>
+</tr>
+<tr>
+  <td colspan="5" style="
     font-size:8pt;
     border:none;
     padding:3px 0 4px;
@@ -508,6 +550,15 @@ function downloadWordDtrFor(
   ${hdrCell("Time Out")}
 </tr>
 ${rows31}
+<tr>
+  <td colspan="5" style="
+    font-size:7.5pt;
+    text-align:right;
+    border:none;
+    padding:4px 0 0;
+    font-family:Arial,sans-serif;
+  ">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong></td>
+</tr>
 <tr>
   <td colspan="5" style="
     font-size:6.5pt;
@@ -620,6 +671,26 @@ ${rows31}
   URL.revokeObjectURL(url);
 }
 
+function csvCell(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function buildDtrCsv(rows: DtrRow[], targetMonth: number, targetYear: number): string {
+  const visibleRows = filterRowsByMonth(rows, targetMonth, targetYear);
+  const csvRows = [
+    ["Date", "Check In", "Break Out", "Break In", "Check Out", "Hours"],
+    ...visibleRows.map((r) => [
+      r.entry_date,
+      fmtTime(r.check_in),
+      fmtTime(r.break_out),
+      fmtTime(r.break_in),
+      fmtTime(r.check_out),
+      computeHours(r).toFixed(2),
+    ]),
+  ];
+  return csvRows.map((row) => row.map(csvCell).join(",")).join("\n");
+}
+
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 function DashboardPage() {
   const navigate = useNavigate();
@@ -645,8 +716,8 @@ function DashboardPage() {
 
   // Month/year the user wants to view/download the DTR for. This now also
   // drives which rows are shown in the table below (see visibleRows).
-  const [downloadMonth, setDownloadMonth] = useState<number>(new Date().getMonth());
-  const [downloadYear, setDownloadYear] = useState<number>(new Date().getFullYear());
+  const [downloadMonth, setDownloadMonth] = useState<number>(attendanceMonth);
+  const [downloadYear, setDownloadYear] = useState<number>(attendanceYear);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -691,15 +762,10 @@ function DashboardPage() {
 
         const [profileResult, entriesResult] = await Promise.all([
           supabase.from("profiles").select("*").eq("id", u.user.id).maybeSingle(),
-          supabase
-            .from("dtr_entries")
-            .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
-            .eq("user_id", u.user.id)
-            .order("entry_date", { ascending: false }),
+          loadDtrRows(u.user.id),
         ]);
 
         if (profileResult.error) throw profileResult.error;
-        if (entriesResult.error) throw entriesResult.error;
         if (profileResult.data) {
           const loadedProfile = { ...EMPTY_PROFILE, ...profileResult.data };
           if (!loadedProfile.is_active) {
@@ -716,7 +782,7 @@ function DashboardPage() {
               : String(loadedProfile.required_ojt_hours),
           );
         }
-        setRows((entriesResult.data as DtrRow[] | null) ?? []);
+        setRows(entriesResult);
       } catch (error) {
         setLoadError(
           error instanceof Error ? error.message : "Unable to load your records. Please try again.",
@@ -759,33 +825,19 @@ function DashboardPage() {
     setAttendanceConflict(false);
     try {
       if (!(await ensureActiveSession())) return;
-      const nowIso = new Date().toISOString();
-      // Compare the current timestamps before writing so another tab cannot
-      // silently overwrite an already-saved punch.
-      let query = today.id
-        ? supabase
-            .from("dtr_entries")
-            .update(punchValue(p, nowIso))
-            .eq("id", today.id)
-            .eq("user_id", userId)
-        : null;
-      if (query)
-        for (const field of ORDER) {
-          query = today[field] ? query.eq(field, today[field]!) : query.is(field, null);
-        }
-      const { data, error } = await (
-        query ??
-        supabase.from("dtr_entries").insert({
-          user_id: userId,
-          entry_date: key,
-          ...punchValue(p, nowIso),
-        })
-      )
-        .select()
-        .single();
+      const { data, error } = await supabase.rpc("dtr_punch", {
+        action: p,
+        expected_date: key,
+        expected_id: today.id ?? null,
+        expected_check_in: today.check_in,
+        expected_break_out: today.break_out,
+        expected_break_in: today.break_in,
+        expected_check_out: today.check_out,
+        undo: false,
+      });
       if (error) {
         if (isAttendanceConflict(error)) throw new AttendanceConflictError();
-        throw new Error("Attendance was not saved. Check your connection and try again.");
+        throw new Error(`Attendance was not saved. ${error.message}`);
       }
       if (!data) throw new AttendanceConflictError();
       if (data) {
@@ -827,17 +879,19 @@ function DashboardPage() {
         )
       )
         return;
-      let query = supabase
-        .from("dtr_entries")
-        .update(punchValue(last, null))
-        .eq("id", today.id)
-        .eq("user_id", userId);
-      for (const field of ORDER)
-        query = today[field] ? query.eq(field, today[field]!) : query.is(field, null);
-      const { data, error } = await query.select().single();
+      const { data, error } = await supabase.rpc("dtr_punch", {
+        action: last,
+        expected_date: key,
+        expected_id: today.id,
+        expected_check_in: today.check_in,
+        expected_break_out: today.break_out,
+        expected_break_in: today.break_in,
+        expected_check_out: today.check_out,
+        undo: true,
+      });
       if (error) {
         if (isAttendanceConflict(error)) throw new AttendanceConflictError();
-        throw new Error("Undo was not saved. Check your connection and try again.");
+        throw new Error(`Undo was not saved. ${error.message}`);
       }
       if (!data) throw new AttendanceConflictError();
       setRows((prev) => prev.map((r) => (r.id === data.id ? data : r)));
@@ -859,7 +913,6 @@ function DashboardPage() {
 
   const saveProfile = async () => {
     if (!userId || profileLock.current) return;
-    if (!(await ensureActiveSession())) return;
     const missing = missingProfileFields(profile);
     if (missing.length > 0) {
       setActionError(`Please complete the required trainee details: ${missing.join(", ")}.`);
@@ -870,18 +923,25 @@ function DashboardPage() {
     setActionError("");
     setAttendanceConflict(false);
     try {
-      const { error } = await supabase
+      if (!(await ensureActiveSession())) return;
+      const { data, error } = await supabase
         .from("profiles")
-        .upsert({
-          id: userId,
+        .update({
           full_name: profile.full_name,
           student_id: profile.student_id,
           company: profile.company,
           ojt_title: profile.ojt_title,
         })
+        .eq("id", userId)
+        .eq("updated_at", profile.updated_at)
         .select()
         .single();
+      if (error?.code === "PGRST116")
+        throw new Error(
+          "Your profile changed in another session. Reload the page before saving again.",
+        );
       if (error) throw new Error(error.message);
+      setProfile((current) => ({ ...current, updated_at: data.updated_at }));
       setProfileDirty(false);
     } catch (error) {
       setActionError(
@@ -894,8 +954,7 @@ function DashboardPage() {
   };
 
   const saveTarget = async () => {
-    if (!userId || savingTarget) return;
-    if (!(await ensureActiveSession())) return;
+    if (!userId || profileLock.current) return;
     const value = targetInput.trim();
     const target = value === "" ? null : Number(value);
     if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
@@ -903,22 +962,39 @@ function DashboardPage() {
       return;
     }
 
+    profileLock.current = true;
     setSavingTarget(true);
     setTargetError("");
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({ required_ojt_hours: target })
-      .eq("id", userId)
-      .select("required_ojt_hours")
-      .single();
-    if (error) {
-      setTargetError(`Target was not saved. ${error.message}`);
-    } else {
-      const savedTarget = data.required_ojt_hours;
-      setProfile((current) => ({ ...current, required_ojt_hours: savedTarget }));
-      setTargetInput(savedTarget == null ? "" : String(savedTarget));
+    try {
+      if (!(await ensureActiveSession())) return;
+      const { data, error } = await supabase
+        .from("profiles")
+        .update({ required_ojt_hours: target })
+        .eq("id", userId)
+        .eq("updated_at", profile.updated_at)
+        .select("required_ojt_hours, updated_at")
+        .single();
+      if (error) {
+        setTargetError(
+          error.code === "PGRST116"
+            ? "Your profile changed in another session. Reload the page before saving again."
+            : `Target was not saved. ${error.message}`,
+        );
+      } else {
+        const savedTarget = data.required_ojt_hours;
+        setProfile((current) => ({
+          ...current,
+          required_ojt_hours: savedTarget,
+          updated_at: data.updated_at,
+        }));
+        setTargetInput(savedTarget == null ? "" : String(savedTarget));
+      }
+    } catch {
+      setTargetError("Target was not saved. Check your connection and try again.");
+    } finally {
+      profileLock.current = false;
+      setSavingTarget(false);
     }
-    setSavingTarget(false);
   };
 
   const signOut = async () => {
@@ -941,18 +1017,7 @@ function DashboardPage() {
 
   const exportCsv = async () => {
     if (!(await ensureActiveSession())) return;
-    const csvRows = [
-      ["Date", "Check In", "Break Out", "Break In", "Check Out", "Hours"],
-      ...visibleRows.map((r) => [
-        r.entry_date,
-        fmtTime(r.check_in),
-        fmtTime(r.break_out),
-        fmtTime(r.break_in),
-        fmtTime(r.check_out),
-        computeHours(r).toFixed(2),
-      ]),
-    ];
-    const csv = csvRows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+    const csv = buildDtrCsv(rows, downloadMonth, downloadYear);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -968,12 +1033,22 @@ function DashboardPage() {
   // builder itself does its own month/year filtering internally.
   const printDtr = async () => {
     if (!(await ensureActiveSession())) return;
-    printDtrFor(profile.full_name || "", rows, downloadMonth, downloadYear);
+    printDtrFor(
+      { fullName: profile.full_name || "", ojtTitle: profile.ojt_title },
+      rows,
+      downloadMonth,
+      downloadYear,
+    );
   };
 
   const downloadWordDtr = async () => {
     if (!(await ensureActiveSession())) return;
-    downloadWordDtrFor(profile.full_name || "", rows, downloadMonth, downloadYear);
+    downloadWordDtrFor(
+      { fullName: profile.full_name || "", ojtTitle: profile.ojt_title },
+      rows,
+      downloadMonth,
+      downloadYear,
+    );
   };
 
   const totalHours = useMemo(
@@ -996,9 +1071,9 @@ function DashboardPage() {
   // (plus the current year), so the dropdown always has something sensible.
   const availableYears = useMemo(() => {
     const years = new Set<number>();
-    years.add(new Date().getFullYear());
+    years.add(attendanceYear());
     for (const r of rows) {
-      const y = new Date(r.entry_date + "T00:00:00").getFullYear();
+      const y = Number(r.entry_date.slice(0, 4));
       years.add(y);
     }
     return Array.from(years).sort((a, b) => b - a);
@@ -1032,6 +1107,7 @@ function DashboardPage() {
             <div className="text-left sm:text-right">
               <div className="font-mono text-xl font-semibold text-slate-900 sm:text-2xl">
                 {now.toLocaleTimeString([], {
+                  timeZone: ATTENDANCE_TIME_ZONE,
                   hour: "2-digit",
                   minute: "2-digit",
                   second: "2-digit",
@@ -1039,6 +1115,7 @@ function DashboardPage() {
               </div>
               <div className="text-xs text-slate-500">
                 {now.toLocaleDateString(undefined, {
+                  timeZone: ATTENDANCE_TIME_ZONE,
                   weekday: "long",
                   year: "numeric",
                   month: "long",
@@ -1108,7 +1185,7 @@ function DashboardPage() {
                 {profileDirty && (
                   <button
                     onClick={saveProfile}
-                    disabled={savingProfile}
+                    disabled={savingProfile || savingTarget}
                     className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                   >
                     {savingProfile ? "Saving…" : "Save"}
@@ -1126,7 +1203,7 @@ function DashboardPage() {
                 </p>
               )}
               <fieldset
-                disabled={savingProfile}
+                disabled={savingProfile || savingTarget}
                 className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
               >
                 <ProfileField
@@ -1197,6 +1274,7 @@ function DashboardPage() {
                       max="10000"
                       step="0.01"
                       aria-label="Required OJT hours"
+                      disabled={savingProfile || savingTarget}
                       value={targetInput}
                       onChange={(e) => {
                         setTargetInput(e.target.value);
@@ -1209,7 +1287,7 @@ function DashboardPage() {
                   {targetDirty && (
                     <button
                       onClick={saveTarget}
-                      disabled={savingTarget}
+                      disabled={savingProfile || savingTarget}
                       className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
                     >
                       {savingTarget ? "Saving…" : "Save target"}
@@ -1604,8 +1682,8 @@ function AdminDashboard() {
 
   // Month/year the admin wants to view/print/download for the selected
   // trainee. This now also drives which rows are shown in the table below.
-  const [docMonth, setDocMonth] = useState<number>(new Date().getMonth());
-  const [docYear, setDocYear] = useState<number>(new Date().getFullYear());
+  const [docMonth, setDocMonth] = useState<number>(attendanceMonth);
+  const [docYear, setDocYear] = useState<number>(attendanceYear);
   const [editFullName, setEditFullName] = useState("");
   const [editStudentId, setEditStudentId] = useState("");
   const [editCompany, setEditCompany] = useState("");
@@ -1631,18 +1709,13 @@ function AdminDashboard() {
 
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select(
-          "id, full_name, student_id, company, ojt_title, required_ojt_hours, is_admin, is_active",
-        )
-        .order("full_name", { ascending: true });
-      if (error) {
-        setTraineeError(error.message);
-      } else {
-        setTrainees((data as TraineeRow[]) ?? []);
+      try {
+        setTrainees(await loadProfiles());
+      } catch {
+        setTraineeError("Unable to load accounts. Reload the page to try again.");
+      } finally {
+        setLoadingTrainees(false);
       }
-      setLoadingTrainees(false);
     })();
   }, []);
 
@@ -1748,19 +1821,16 @@ function AdminDashboard() {
     setEntries([]);
     setLoadingEntries(true);
     setEntriesError(null);
-    const { data, error } = await supabase
-      .from("dtr_entries")
-      .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
-      .eq("user_id", userId)
-      .order("entry_date", { ascending: false });
-    if (version !== requestVersion.current) return;
-    if (error) {
-      setEntriesError(error.message);
-      setEntries([]);
-    } else {
-      setEntries((data as TraineeDtr[]) ?? []);
+    try {
+      const data = await loadDtrRows(userId);
+      if (version !== requestVersion.current) return;
+      setEntries(data);
+    } catch {
+      if (version !== requestVersion.current) return;
+      setEntriesError("Unable to load attendance. Select the account again to retry.");
+    } finally {
+      if (version === requestVersion.current) setLoadingEntries(false);
     }
-    setLoadingEntries(false);
   };
 
   const deleteEntry = async (entryId: string) => {
@@ -1889,6 +1959,7 @@ function AdminDashboard() {
     setProfileEditError("");
     setProfileEditSuccess("");
     const { data, error } = await supabase.rpc("dtr_admin_update_trainee_profile", {
+      expected_updated_at: selectedTrainee.updated_at,
       target_user_id: selectedTrainee.id,
       new_full_name: fullName,
       new_student_id: studentId,
@@ -1911,6 +1982,7 @@ function AdminDashboard() {
                 ojt_title: data.ojt_title,
                 required_ojt_hours: data.required_ojt_hours,
                 is_admin: data.is_admin,
+                updated_at: data.updated_at,
               }
             : trainee,
         ),
@@ -1955,7 +2027,9 @@ function AdminDashboard() {
     } else if (data) {
       setTrainees((current) =>
         current.map((trainee) =>
-          trainee.id === selectedTrainee.id ? { ...trainee, is_active: data.is_active } : trainee,
+          trainee.id === selectedTrainee.id
+            ? { ...trainee, is_active: data.is_active, updated_at: data.updated_at }
+            : trainee,
         ),
       );
       if (version === requestVersion.current)
@@ -1995,7 +2069,9 @@ function AdminDashboard() {
       );
       // The server may have committed before a response was lost. Reconcile
       // with the database rather than claiming failure means nothing changed.
-      const refreshed = await supabase.from("profiles").select("*").order("full_name");
+      const refreshed = await loadProfiles()
+        .then((data) => ({ data, error: null }))
+        .catch((error: unknown) => ({ data: null, error }));
       if (!refreshed.error && refreshed.data) {
         setTrainees(refreshed.data);
         if (!refreshed.data.some((trainee) => trainee.id === target.id)) {
@@ -2042,18 +2118,7 @@ function AdminDashboard() {
 
   const exportSelectedCsv = () => {
     if (!selectedTrainee) return;
-    const csvRows = [
-      ["Date", "Check In", "Break Out", "Break In", "Check Out", "Hours"],
-      ...visibleEntries.map((r) => [
-        r.entry_date,
-        fmtTime(r.check_in),
-        fmtTime(r.break_out),
-        fmtTime(r.break_in),
-        fmtTime(r.check_out),
-        computeHours(r).toFixed(2),
-      ]),
-    ];
-    const csv = csvRows.map((r) => r.map((c) => `"${c}"`).join(",")).join("\n");
+    const csv = buildDtrCsv(entries, docMonth, docYear);
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -2067,9 +2132,9 @@ function AdminDashboard() {
   // entries (plus the current year), same approach as the trainee dashboard.
   const availableYears = useMemo(() => {
     const years = new Set<number>();
-    years.add(new Date().getFullYear());
+    years.add(attendanceYear());
     for (const r of entries) {
-      const y = new Date(r.entry_date + "T00:00:00").getFullYear();
+      const y = Number(r.entry_date.slice(0, 4));
       years.add(y);
     }
     return Array.from(years).sort((a, b) => b - a);
@@ -2077,12 +2142,22 @@ function AdminDashboard() {
 
   const printSelectedDtr = () => {
     if (!selectedTrainee) return;
-    printDtrFor(selectedTrainee.full_name || "", entries, docMonth, docYear);
+    printDtrFor(
+      { fullName: selectedTrainee.full_name || "", ojtTitle: selectedTrainee.ojt_title },
+      entries,
+      docMonth,
+      docYear,
+    );
   };
 
   const downloadSelectedWordDtr = () => {
     if (!selectedTrainee) return;
-    downloadWordDtrFor(selectedTrainee.full_name || "", entries, docMonth, docYear);
+    downloadWordDtrFor(
+      { fullName: selectedTrainee.full_name || "", ojtTitle: selectedTrainee.ojt_title },
+      entries,
+      docMonth,
+      docYear,
+    );
   };
 
   return (
