@@ -1,0 +1,27 @@
+# Host settings supply environment values. Never upload workstation credentials.
+.env
+.env.*
+**/.env
+**/.env.*
+.local-test-accounts*
+**/.local-test-accounts*
+.git/
+.github/
+.lovable/
+node_modules/
+dist/
+dist-ssr/
+.output/
+.tanstack/
+.nitro/
+.vinxi/
+test-results/
+playwright-report/
+tests/
+playwright.config.ts
+supabase/.temp/
+supabase/.branches/
+scripts/seed-local.mjs
+scripts/dev-local.mjs
+scripts/local-supabase.mjs
+*.log
