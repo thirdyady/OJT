@@ -2,20 +2,14 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Enums } from "@/integrations/supabase/types";
+import { accountInput, type AccountInput } from "./account-input";
 
-const traineeAccountInput = z.object({
-  email: z.string().trim().toLowerCase().email().max(254),
-  password: z.string().min(8).max(72),
-  fullName: z.string().trim().min(1).max(200),
-  studentId: z.string().trim().min(1).max(100),
-  company: z.string().trim().min(1).max(200),
-  ojtTitle: z.string().trim().min(1).max(200),
-  requiredOjtHours: z.number().finite().positive().max(10000).nullable(),
-});
-
-export type CreateTraineeAccountInput = z.infer<typeof traineeAccountInput>;
+export type CreateTraineeAccountInput = AccountInput;
 
 export type CreatedTraineeProfile = {
+  account_type: Enums<"account_type">;
+  required_workdays: number | null;
   updated_at: string;
   id: string;
   full_name: string | null;
@@ -29,7 +23,7 @@ export type CreatedTraineeProfile = {
 
 export const createTraineeAccount = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .validator(traineeAccountInput)
+  .validator(accountInput)
   .handler(async ({ data, context }): Promise<{ profile: CreatedTraineeProfile }> => {
     const { data: isAdmin, error: roleError } = await context.supabase.rpc("dtr_is_admin");
     if (roleError) {

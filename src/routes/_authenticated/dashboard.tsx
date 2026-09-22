@@ -1,9 +1,12 @@
+import { accountLabels } from "@/lib/account-progress.mjs";
+import { AccountProfileSummary, AccountProgressSummary } from "@/components/account-summary";
+import type { Enums } from "@/integrations/supabase/types";
+import { CreateAccountForm } from "@/components/create-account-form";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  createTraineeAccount,
   deleteUnusedTraineeAccount,
   type CreatedTraineeProfile,
 } from "@/lib/admin-account.functions";
@@ -16,11 +19,7 @@ import {
   AlertDialogFooter,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
-import {
-  calculateCompletedHours as computeHours,
-  calculateCompletedHoursFromRecords,
-  calculateOjtProgress,
-} from "@/lib/ojt-progress.mjs";
+import { calculateCompletedHours as computeHours } from "@/lib/ojt-progress.mjs";
 import psaLogo from "../../../assets/psa-logo.webp";
 import { loadDtrRows, loadProfiles } from "@/lib/dtr-data";
 import {
@@ -66,6 +65,8 @@ type DtrReportProfile = {
 };
 
 type Profile = {
+  account_type: Enums<"account_type">;
+  required_workdays: number | null;
   updated_at: string;
   full_name: string | null;
   student_id: string | null;
@@ -77,6 +78,8 @@ type Profile = {
 };
 
 type TraineeRow = {
+  account_type: Enums<"account_type">;
+  required_workdays: number | null;
   updated_at: string;
   id: string;
   full_name: string | null;
@@ -243,6 +246,8 @@ function filterRowsByMonth<T extends DtrRow>(
 }
 
 const EMPTY_PROFILE: Profile = {
+  account_type: "ojt",
+  required_workdays: null,
   updated_at: "",
   full_name: "",
   student_id: "",
@@ -1056,14 +1061,6 @@ function DashboardPage() {
     [visibleRows],
   );
 
-  const completedOjtHours = useMemo(() => calculateCompletedHoursFromRecords(rows), [rows]);
-  const ojtProgress = useMemo(
-    () =>
-      profile.required_ojt_hours == null
-        ? null
-        : calculateOjtProgress(profile.required_ojt_hours, completedOjtHours),
-    [profile.required_ojt_hours, completedOjtHours],
-  );
   const targetDirty =
     targetInput !== (profile.required_ojt_hours == null ? "" : String(profile.required_ojt_hours));
 
@@ -1178,192 +1175,144 @@ function DashboardPage() {
           <AdminDashboard />
         ) : (
           <>
-            {/* Profile */}
-            <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Trainee details</h2>
-                {profileDirty && (
-                  <button
-                    onClick={saveProfile}
-                    disabled={savingProfile || savingTarget}
-                    className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                  >
-                    {savingProfile ? "Saving…" : "Save"}
-                  </button>
-                )}
-              </div>
-              {missingProfileFields(profile).length > 0 && (
-                <p
-                  role="status"
-                  className="mb-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
-                >
-                  Complete your required trainee details ({missingProfileFields(profile).join(", ")}
-                  ) to keep your profile information up to date. Your existing attendance records
-                  remain available.
-                </p>
-              )}
-              <fieldset
-                disabled={savingProfile || savingTarget}
-                className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-              >
-                <ProfileField
-                  label="Full Name"
-                  required
-                  value={profile.full_name ?? ""}
-                  onChange={(v) => {
-                    setProfile({ ...profile, full_name: v });
-                    setProfileDirty(true);
-                  }}
-                  placeholder="Juan Dela Cruz"
-                />
-                <ProfileField
-                  label="Student ID"
-                  required
-                  value={profile.student_id ?? ""}
-                  onChange={(v) => {
-                    setProfile({ ...profile, student_id: v });
-                    setProfileDirty(true);
-                  }}
-                  placeholder="2024-00001"
-                />
-                <ProfileField
-                  label="Host Company"
-                  required
-                  value={profile.company ?? ""}
-                  onChange={(v) => {
-                    setProfile({ ...profile, company: v });
-                    setProfileDirty(true);
-                  }}
-                  placeholder="Acme Corp."
-                />
-                <ProfileField
-                  label="OJT Title"
-                  required
-                  value={profile.ojt_title ?? ""}
-                  onChange={(v) => {
-                    setProfile({ ...profile, ojt_title: v });
-                    setProfileDirty(true);
-                  }}
-                  placeholder="Data Analyst Intern"
-                />
-              </fieldset>
-            </section>
-
-            {/* OJT progress */}
-            <section
-              aria-labelledby="ojt-progress-heading"
-              className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
-            >
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h2 id="ojt-progress-heading" className="text-sm font-semibold text-slate-900">
-                    OJT progress
-                  </h2>
-                  <p className="mt-1 text-xs text-slate-500">
-                    Completed hours use every complete DTR day in your account.
-                  </p>
-                </div>
-                <div className="flex items-end gap-2">
-                  <label className="block">
-                    <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                      Required hours
-                    </span>
-                    <input
-                      type="number"
-                      min="0.01"
-                      max="10000"
-                      step="0.01"
-                      aria-label="Required OJT hours"
-                      disabled={savingProfile || savingTarget}
-                      value={targetInput}
-                      onChange={(e) => {
-                        setTargetInput(e.target.value);
-                        setTargetError("");
-                      }}
-                      placeholder="486"
-                      className="mt-1 w-28 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                    />
-                  </label>
-                  {targetDirty && (
-                    <button
-                      onClick={saveTarget}
-                      disabled={savingProfile || savingTarget}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {savingTarget ? "Saving…" : "Save target"}
-                    </button>
-                  )}
-                </div>
-              </div>
-
-              {targetError && (
-                <p
-                  role="alert"
-                  className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700"
-                >
-                  {targetError}
-                </p>
-              )}
-
-              {ojtProgress ? (
-                <>
-                  <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <ProgressStat
-                      label="Required"
-                      value={`${ojtProgress.requiredHours.toFixed(2)} hrs`}
-                    />
-                    <ProgressStat
-                      label="Completed"
-                      value={`${ojtProgress.completedHours.toFixed(2)} hrs`}
-                    />
-                    <ProgressStat
-                      label="Remaining"
-                      value={`${ojtProgress.remainingHours.toFixed(2)} hrs`}
-                    />
-                    <ProgressStat
-                      label="Complete"
-                      value={`${ojtProgress.completionPercentage.toFixed(1)}%`}
-                    />
+            {profile.account_type !== "ojt" ? (
+              <AccountProfileSummary profile={profile} />
+            ) : (
+              <>
+                <p className="text-sm">Account type: OJT</p>
+                {/* Profile */}
+                <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+                  <div className="mb-3 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-slate-900">Trainee details</h2>
+                    {profileDirty && (
+                      <button
+                        onClick={saveProfile}
+                        disabled={savingProfile || savingTarget}
+                        className="rounded-md bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {savingProfile ? "Saving…" : "Save"}
+                      </button>
+                    )}
                   </div>
-                  <div className="mt-4">
-                    <div
-                      role="progressbar"
-                      aria-label="OJT completion"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.min(100, ojtProgress.completionPercentage)}
-                      className="h-3 overflow-hidden rounded-full bg-slate-100"
-                    >
-                      <div
-                        className={`h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none ${
-                          ojtProgress.isComplete
-                            ? "bg-emerald-500 motion-safe:animate-pulse"
-                            : "bg-slate-900"
-                        }`}
-                        style={{
-                          width: `${Math.min(100, Math.max(0, ojtProgress.completionPercentage))}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                  {ojtProgress.isComplete && (
+                  {missingProfileFields(profile).length > 0 && (
                     <p
-                      aria-live="polite"
-                      className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-medium text-emerald-800 motion-safe:animate-pulse"
+                      role="status"
+                      className="mb-3 rounded border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800"
                     >
-                      <span aria-hidden="true">✦ </span>
-                      OJT target reached!
-                      {ojtProgress.overageHours > 0 &&
-                        ` ${ojtProgress.overageHours.toFixed(2)} hours beyond your target.`}
+                      Complete your required trainee details (
+                      {missingProfileFields(profile).join(", ")}) to keep your profile information
+                      up to date. Your existing attendance records remain available.
                     </p>
                   )}
-                </>
-              ) : (
-                <p className="mt-5 rounded-md bg-slate-50 px-3 py-3 text-sm text-slate-600">
-                  Set your required OJT hours to start tracking your completion progress.
-                </p>
-              )}
-            </section>
+                  <fieldset
+                    disabled={savingProfile || savingTarget}
+                    className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
+                  >
+                    <ProfileField
+                      label="Full Name"
+                      required
+                      value={profile.full_name ?? ""}
+                      onChange={(v) => {
+                        setProfile({ ...profile, full_name: v });
+                        setProfileDirty(true);
+                      }}
+                      placeholder="Juan Dela Cruz"
+                    />
+                    <ProfileField
+                      label="Student ID"
+                      required
+                      value={profile.student_id ?? ""}
+                      onChange={(v) => {
+                        setProfile({ ...profile, student_id: v });
+                        setProfileDirty(true);
+                      }}
+                      placeholder="2024-00001"
+                    />
+                    <ProfileField
+                      label="Host Company"
+                      required
+                      value={profile.company ?? ""}
+                      onChange={(v) => {
+                        setProfile({ ...profile, company: v });
+                        setProfileDirty(true);
+                      }}
+                      placeholder="Acme Corp."
+                    />
+                    <ProfileField
+                      label="OJT Title"
+                      required
+                      value={profile.ojt_title ?? ""}
+                      onChange={(v) => {
+                        setProfile({ ...profile, ojt_title: v });
+                        setProfileDirty(true);
+                      }}
+                      placeholder="Data Analyst Intern"
+                    />
+                  </fieldset>
+                </section>
+
+                {/* OJT progress */}
+                <section
+                  aria-labelledby="ojt-progress-heading"
+                  className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <h2
+                        id="ojt-progress-heading"
+                        className="text-sm font-semibold text-slate-900"
+                      >
+                        OJT hour target
+                      </h2>
+                      <p className="mt-1 text-xs text-slate-500">
+                        Completed hours use every complete DTR day in your account.
+                      </p>
+                    </div>
+                    <div className="flex items-end gap-2">
+                      <label className="block">
+                        <span className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                          Required hours
+                        </span>
+                        <input
+                          type="number"
+                          min="0.01"
+                          max="10000"
+                          step="0.01"
+                          aria-label="Required OJT hours"
+                          disabled={savingProfile || savingTarget}
+                          value={targetInput}
+                          onChange={(e) => {
+                            setTargetInput(e.target.value);
+                            setTargetError("");
+                          }}
+                          placeholder="486"
+                          className="mt-1 w-28 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                        />
+                      </label>
+                      {targetDirty && (
+                        <button
+                          onClick={saveTarget}
+                          disabled={savingProfile || savingTarget}
+                          className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                        >
+                          {savingTarget ? "Saving…" : "Save target"}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {targetError && (
+                    <p
+                      role="alert"
+                      className="mt-3 rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700"
+                    >
+                      {targetError}
+                    </p>
+                  )}
+                </section>
+              </>
+            )}
+            <AccountProgressSummary profile={profile} records={rows} />
 
             {/* Punch card */}
             <section
@@ -1647,17 +1596,7 @@ function ProfileField({
 
 type TraineeDtr = DtrRow & { user_id: string };
 
-function ProgressStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold text-slate-900">{value}</div>
-    </div>
-  );
-}
-
 function AdminDashboard() {
-  const createAccount = useServerFn(createTraineeAccount);
   const deleteAccount = useServerFn(deleteUnusedTraineeAccount);
   const [deletionTarget, setDeletionTarget] = useState<TraineeRow | null>(null);
   const [deletionConfirmation, setDeletionConfirmation] = useState("");
@@ -1696,16 +1635,6 @@ function AdminDashboard() {
   const [statusError, setStatusError] = useState("");
   const [statusSuccess, setStatusSuccess] = useState("");
   const [creatingAccount, setCreatingAccount] = useState(false);
-  const [createFullName, setCreateFullName] = useState("");
-  const [createStudentId, setCreateStudentId] = useState("");
-  const [createCompany, setCreateCompany] = useState("");
-  const [createOjtTitle, setCreateOjtTitle] = useState("");
-  const [createEmail, setCreateEmail] = useState("");
-  const [createPassword, setCreatePassword] = useState("");
-  const [createPasswordConfirm, setCreatePasswordConfirm] = useState("");
-  const [createRequiredHours, setCreateRequiredHours] = useState("");
-  const [createError, setCreateError] = useState("");
-  const [createSuccess, setCreateSuccess] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -1719,86 +1648,24 @@ function AdminDashboard() {
     })();
   }, []);
 
-  const createAccountSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const fullName = createFullName.trim();
-    const studentId = createStudentId.trim();
-    const company = createCompany.trim();
-    const ojtTitle = createOjtTitle.trim();
-    const email = createEmail.trim().toLowerCase();
-    const requiredOjtHours = createRequiredHours.trim();
-    const target = requiredOjtHours === "" ? null : Number(requiredOjtHours);
-    const missing = [
-      !fullName && "Full Name",
-      !studentId && "Student ID",
-      !company && "Host Company",
-      !ojtTitle && "OJT Title",
-      !email && "Email",
-      !createPassword && "Temporary password",
-    ].filter(Boolean) as string[];
-
-    setCreateError("");
-    setCreateSuccess("");
-    if (missing.length > 0) {
-      setCreateError(`Complete the required fields: ${missing.join(", ")}.`);
-      return;
-    }
-    if (createPassword !== createPasswordConfirm) {
-      setCreateError("Temporary passwords do not match.");
-      return;
-    }
-    if (target !== null && (!Number.isFinite(target) || target <= 0 || target > 10000)) {
-      setCreateError("Enter a target between 0 and 10,000 hours, or leave it blank.");
-      return;
-    }
-
-    setCreatingAccount(true);
-    try {
-      const { profile: createdProfile } = await createAccount({
-        data: {
-          email,
-          password: createPassword,
-          fullName,
-          studentId,
-          company,
-          ojtTitle,
-          requiredOjtHours: target,
-        },
-      });
-      const profile = createdProfile as CreatedTraineeProfile;
-      setTrainees((current) =>
-        [...current, profile as TraineeRow].sort((a, b) =>
-          (a.full_name ?? "").localeCompare(b.full_name ?? ""),
-        ),
-      );
-      ++requestVersion.current;
-      setSelectedId(profile.id);
-      setEntries([]);
-      setLoadingEntries(false);
-      setEntriesError(null);
-      setEditFullName(profile.full_name ?? "");
-      setEditStudentId(profile.student_id ?? "");
-      setEditCompany(profile.company ?? "");
-      setEditOjtTitle(profile.ojt_title ?? "");
-      setRequiredHoursInput(
-        profile.required_ojt_hours == null ? "" : String(profile.required_ojt_hours),
-      );
-      setCreateFullName("");
-      setCreateStudentId("");
-      setCreateCompany("");
-      setCreateOjtTitle("");
-      setCreateEmail("");
-      setCreatePassword("");
-      setCreatePasswordConfirm("");
-      setCreateRequiredHours("");
-      setCreateSuccess(`Account created for ${profile.full_name || email}.`);
-    } catch (error) {
-      setCreateError(
-        error instanceof Error ? error.message : "Account was not created. Please try again.",
-      );
-    } finally {
-      setCreatingAccount(false);
-    }
+  const accountCreated = (profile: CreatedTraineeProfile) => {
+    setTrainees((current) =>
+      [...current, profile as TraineeRow].sort((a, b) =>
+        (a.full_name ?? "").localeCompare(b.full_name ?? ""),
+      ),
+    );
+    ++requestVersion.current;
+    setSelectedId(profile.id);
+    setEntries([]);
+    setLoadingEntries(false);
+    setEntriesError(null);
+    setEditFullName(profile.full_name ?? "");
+    setEditStudentId(profile.student_id ?? "");
+    setEditCompany(profile.company ?? "");
+    setEditOjtTitle(profile.ojt_title ?? "");
+    setRequiredHoursInput(
+      profile.required_ojt_hours == null ? "" : String(profile.required_ojt_hours),
+    );
   };
 
   const loadEntries = async (userId: string) => {
@@ -2232,175 +2099,11 @@ function AdminDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <form
-        onSubmit={createAccountSubmit}
-        data-admin-create-account-endpoint={createTraineeAccount.url}
-        className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
-      >
-        <div className="mb-3">
-          <h3 className="text-sm font-semibold text-slate-900">Create trainee account</h3>
-          <p className="mt-1 text-xs text-slate-500">
-            Set the trainee&apos;s sign-in details and profile. The account is active immediately.
-          </p>
-        </div>
-        <fieldset
-          disabled={creatingAccount || deletingAccount}
-          className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
-        >
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Full Name</span>
-            <input
-              required
-              aria-label="New trainee full name"
-              value={createFullName}
-              onChange={(e) => {
-                setCreateFullName(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="Juan Dela Cruz"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Student ID</span>
-            <input
-              required
-              aria-label="New trainee student ID"
-              value={createStudentId}
-              onChange={(e) => {
-                setCreateStudentId(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="2024-00001"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Host Company</span>
-            <input
-              required
-              aria-label="New trainee host company"
-              value={createCompany}
-              onChange={(e) => {
-                setCreateCompany(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="Philippine Statistics Authority"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">OJT Title</span>
-            <input
-              required
-              aria-label="New trainee OJT title"
-              value={createOjtTitle}
-              onChange={(e) => {
-                setCreateOjtTitle(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="Data Analyst Intern"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Email</span>
-            <input
-              required
-              type="email"
-              aria-label="New trainee email"
-              autoComplete="off"
-              value={createEmail}
-              onChange={(e) => {
-                setCreateEmail(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="trainee@school.edu"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Temporary password</span>
-            <input
-              required
-              type="password"
-              minLength={8}
-              maxLength={72}
-              aria-label="New trainee temporary password"
-              autoComplete="new-password"
-              value={createPassword}
-              onChange={(e) => {
-                setCreatePassword(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="At least 8 characters"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Confirm password</span>
-            <input
-              required
-              type="password"
-              minLength={8}
-              maxLength={72}
-              aria-label="Confirm new trainee password"
-              autoComplete="new-password"
-              value={createPasswordConfirm}
-              onChange={(e) => {
-                setCreatePasswordConfirm(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="Repeat the password"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium text-slate-600">Required OJT hours</span>
-            <input
-              type="number"
-              min="0.01"
-              max="10000"
-              step="0.01"
-              aria-label="New trainee required OJT hours"
-              value={createRequiredHours}
-              onChange={(e) => {
-                setCreateRequiredHours(e.target.value);
-                setCreateError("");
-                setCreateSuccess("");
-              }}
-              placeholder="486"
-              className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-            />
-          </label>
-        </fieldset>
-        <div className="mt-3 flex flex-wrap items-center gap-3">
-          <button
-            type="submit"
-            disabled={creatingAccount}
-            className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-          >
-            {creatingAccount ? "Creating..." : "Create trainee account"}
-          </button>
-          {createError && (
-            <p role="alert" className="text-xs text-red-600">
-              {createError}
-            </p>
-          )}
-          {createSuccess && (
-            <p role="status" className="text-xs text-emerald-700">
-              {createSuccess}
-            </p>
-          )}
-        </div>
-      </form>
+      <CreateAccountForm
+        disabled={deletingAccount}
+        onCreated={accountCreated}
+        onBusyChange={setCreatingAccount}
+      />
       <fieldset
         disabled={mutating}
         aria-busy={mutating}
@@ -2447,23 +2150,30 @@ function AdminDashboard() {
                         selectedId === t.id ? "text-slate-300" : "text-slate-400"
                       }`}
                     >
-                      {t.student_id || "No ID"} · {t.company || "No company"}
+                      {t.account_type === "ojt"
+                        ? t.student_id || "No ID"
+                        : accountLabels[t.account_type]}{" "}
+                      · {t.company || "No company"}
                     </div>
                     <div
                       className={`text-xs ${
                         selectedId === t.id ? "text-slate-300" : "text-slate-400"
                       }`}
                     >
-                      {t.ojt_title ? `OJT: ${t.ojt_title}` : "OJT title incomplete"}
+                      {t.ojt_title || "Position not provided"}
                     </div>
                     <div
                       className={`text-xs ${
                         selectedId === t.id ? "text-slate-300" : "text-slate-400"
                       }`}
                     >
-                      {t.required_ojt_hours == null
-                        ? "OJT target not set"
-                        : `Target: ${t.required_ojt_hours} hrs`}
+                      {t.account_type === "ojt"
+                        ? t.required_ojt_hours == null
+                          ? "OJT target not set"
+                          : `Target: ${t.required_ojt_hours} hrs`
+                        : t.account_type === "processing"
+                          ? `Required workdays: ${t.required_workdays ?? "Not configured"}`
+                          : accountLabels[t.account_type]}
                     </div>
                     <div
                       className={`text-xs font-medium ${
@@ -2496,11 +2206,13 @@ function AdminDashboard() {
               </h2>
               {selectedTrainee && (
                 <p className="text-xs text-slate-500">
-                  {selectedTrainee.student_id || "No ID"}
+                  {selectedTrainee.account_type === "ojt"
+                    ? selectedTrainee.student_id || "No ID"
+                    : accountLabels[selectedTrainee.account_type]}
                   {" \u00b7 "}
                   {selectedTrainee.company || "No company"}
                   {" \u00b7 "}
-                  {selectedTrainee.ojt_title || "No OJT title"}
+                  {selectedTrainee.ojt_title || "Position not provided"}
                   {" \u00b7 "}
                   {MONTHS[docMonth]} {docYear}
                   {" \u00b7 "}
@@ -2510,82 +2222,92 @@ function AdminDashboard() {
               )}
               {selectedTrainee && (
                 <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-3">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Trainee profile
-                    </h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      Update profile details and the school-specific OJT target.
-                    </p>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block">
-                      <span className="text-xs font-medium text-slate-600">Full Name</span>
-                      <input
-                        value={editFullName}
-                        onChange={(e) => {
-                          setEditFullName(e.target.value);
-                          setProfileEditError("");
-                          setProfileEditSuccess("");
-                        }}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs font-medium text-slate-600">Student ID</span>
-                      <input
-                        value={editStudentId}
-                        onChange={(e) => {
-                          setEditStudentId(e.target.value);
-                          setProfileEditError("");
-                          setProfileEditSuccess("");
-                        }}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs font-medium text-slate-600">Host Company</span>
-                      <input
-                        value={editCompany}
-                        onChange={(e) => {
-                          setEditCompany(e.target.value);
-                          setProfileEditError("");
-                          setProfileEditSuccess("");
-                        }}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                      />
-                    </label>
-                    <label className="block">
-                      <span className="text-xs font-medium text-slate-600">OJT Title</span>
-                      <input
-                        value={editOjtTitle}
-                        onChange={(e) => {
-                          setEditOjtTitle(e.target.value);
-                          setProfileEditError("");
-                          setProfileEditSuccess("");
-                        }}
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                      />
-                    </label>
-                    <label className="block sm:col-span-2">
-                      <span className="text-xs font-medium text-slate-600">Required OJT hours</span>
-                      <input
-                        type="number"
-                        min="0.01"
-                        max="10000"
-                        step="0.01"
-                        aria-label="Required OJT hours"
-                        value={requiredHoursInput}
-                        onChange={(e) => {
-                          setRequiredHoursInput(e.target.value);
-                          setProfileEditError("");
-                          setProfileEditSuccess("");
-                        }}
-                        placeholder="486"
-                        className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
-                      />
-                    </label>
-                  </div>
+                  <AccountProfileSummary profile={selectedTrainee} />
+                  {!loadingEntries && !entriesError && (
+                    <AccountProgressSummary profile={selectedTrainee} records={entries} />
+                  )}
+                  {selectedTrainee.account_type === "ojt" && (
+                    <>
+                      <div className="mb-3">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          Trainee profile
+                        </h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Update profile details and the school-specific OJT target.
+                        </p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="block">
+                          <span className="text-xs font-medium text-slate-600">Full Name</span>
+                          <input
+                            value={editFullName}
+                            onChange={(e) => {
+                              setEditFullName(e.target.value);
+                              setProfileEditError("");
+                              setProfileEditSuccess("");
+                            }}
+                            className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-medium text-slate-600">Student ID</span>
+                          <input
+                            value={editStudentId}
+                            onChange={(e) => {
+                              setEditStudentId(e.target.value);
+                              setProfileEditError("");
+                              setProfileEditSuccess("");
+                            }}
+                            className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-medium text-slate-600">Host Company</span>
+                          <input
+                            value={editCompany}
+                            onChange={(e) => {
+                              setEditCompany(e.target.value);
+                              setProfileEditError("");
+                              setProfileEditSuccess("");
+                            }}
+                            className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="text-xs font-medium text-slate-600">OJT Title</span>
+                          <input
+                            value={editOjtTitle}
+                            onChange={(e) => {
+                              setEditOjtTitle(e.target.value);
+                              setProfileEditError("");
+                              setProfileEditSuccess("");
+                            }}
+                            className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                          />
+                        </label>
+                        <label className="block sm:col-span-2">
+                          <span className="text-xs font-medium text-slate-600">
+                            Required OJT hours
+                          </span>
+                          <input
+                            type="number"
+                            min="0.01"
+                            max="10000"
+                            step="0.01"
+                            aria-label="Required OJT hours"
+                            value={requiredHoursInput}
+                            onChange={(e) => {
+                              setRequiredHoursInput(e.target.value);
+                              setProfileEditError("");
+                              setProfileEditSuccess("");
+                            }}
+                            placeholder="486"
+                            className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-slate-400"
+                          />
+                        </label>
+                      </div>
+                    </>
+                  )}
                   <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-slate-200 pt-3">
                     <div className="mr-auto">
                       <div className="text-xs font-medium text-slate-600">Account status</div>
@@ -2620,13 +2342,15 @@ function AdminDashboard() {
                     )}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <button
-                      onClick={saveTraineeProfile}
-                      disabled={savingProfile}
-                      className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-                    >
-                      {savingProfile ? "Saving..." : "Save trainee profile"}
-                    </button>
+                    {selectedTrainee.account_type === "ojt" && (
+                      <button
+                        onClick={saveTraineeProfile}
+                        disabled={savingProfile}
+                        className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                      >
+                        {savingProfile ? "Saving..." : "Save trainee profile"}
+                      </button>
+                    )}
                     <button
                       disabled={
                         selectedTrainee.is_admin ||

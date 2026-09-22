@@ -1,4 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { Enums } from "@/integrations/supabase/types";
 
 // Use a unique cursor and continue until an empty page. Do not assume the
 // deployment's PostgREST row limit matches our requested page size.
@@ -32,15 +33,16 @@ export async function loadDtrRows(userId: string) {
   return rows.sort((a, b) => b.entry_date.localeCompare(a.entry_date));
 }
 
-export async function loadProfiles() {
+export async function loadProfiles(accountType?: Enums<"account_type">) {
   const rows = await allPages((after) => {
     let query = supabase
       .from("profiles")
       .select(
-        "id, full_name, student_id, company, ojt_title, required_ojt_hours, is_admin, is_active, updated_at",
+        "id, full_name, student_id, company, ojt_title, account_type, required_ojt_hours, required_workdays, is_admin, is_active, updated_at",
       )
       .order("id")
       .limit(500);
+    if (accountType) query = query.eq("account_type", accountType);
     if (after) query = query.gt("id", after);
     return query;
   });

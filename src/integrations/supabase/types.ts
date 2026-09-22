@@ -41,6 +41,8 @@ export type Database = {
       };
       profiles: {
         Row: {
+          account_type: Database["public"]["Enums"]["account_type"];
+          required_workdays: number | null;
           company: string | null;
           created_at: string;
           full_name: string | null;
@@ -53,6 +55,8 @@ export type Database = {
           updated_at: string;
         };
         Insert: {
+          account_type?: Database["public"]["Enums"]["account_type"];
+          required_workdays?: number | null;
           company?: string | null;
           created_at?: string;
           full_name?: string | null;
@@ -65,6 +69,8 @@ export type Database = {
           updated_at?: string;
         };
         Update: {
+          account_type?: Database["public"]["Enums"]["account_type"];
+          required_workdays?: number | null;
           company?: string | null;
           created_at?: string;
           full_name?: string | null;
@@ -124,7 +130,7 @@ export type Database = {
       };
     };
     Enums: {
-      [_ in never]: never;
+      account_type: "ojt" | "job_order" | "processing" | "regular_employee";
     };
     CompositeTypes: {
       [_ in never]: never;
@@ -245,6 +251,8 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      account_type: ["ojt", "job_order", "processing", "regular_employee"],
+    },
   },
 } as const;
