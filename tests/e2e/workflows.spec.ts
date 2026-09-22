@@ -142,7 +142,9 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await expect(page.getByRole("heading", { name: "Manage Accounts" })).toBeVisible();
   await page.getByPlaceholder("Search name, ID, company…").fill(updatedStudentId);
   await page.getByRole("button", { name: /Browser Test Trainee/ }).click();
-  await expect(page.getByText("OJT: Browser Test Intern")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Account profile", exact: true }).getByText("Browser Test Intern", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByLabel("Full Name", { exact: true })).toHaveValue("Browser Test Trainee");
   await page.getByLabel("Full Name", { exact: true }).fill("Browser Test Trainee Updated");
   await page.getByLabel("Student ID", { exact: true }).fill(updatedStudentId);
@@ -183,7 +185,7 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
   await page.getByLabel("Email", { exact: true }).fill(adminEmail);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "Create trainee account" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Create account" })).toBeVisible();
   const endpoint = await page
     .locator("[data-admin-create-account-endpoint]")
     .getAttribute("data-admin-create-account-endpoint");
@@ -198,7 +200,7 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
   await page.getByLabel("New trainee temporary password", { exact: true }).fill(createdPassword);
   await page.getByLabel("Confirm new trainee password", { exact: true }).fill(createdPassword);
   await page.getByLabel("New trainee required OJT hours", { exact: true }).fill("486");
-  await page.getByRole("button", { name: "Create trainee account", exact: true }).click();
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Account created");
   const { users } = checked(await local.admin.auth.admin.listUsers({ perPage: 1000 }));
   createdUserId = users.find((user) => user.email === createdEmail)?.id;
