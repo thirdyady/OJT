@@ -9,7 +9,13 @@ export function localSupabase() {
       ? ["/d", "/s", "/c", "npx --yes supabase status -o json"]
       : ["--yes", "supabase", "status", "-o", "json"];
   const status = JSON.parse(
-    execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }),
+    execFileSync(command, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      // Optional isolated local stack when another project owns default ports.
+      // The returned API and DB URLs must still pass the loopback guards below.
+      cwd: process.env.DTR_LOCAL_WORKDIR || process.cwd(),
+    }),
   );
   const url = new URL(status.API_URL);
   if (url.protocol !== "http:" || !["localhost", "127.0.0.1"].includes(url.hostname)) {
