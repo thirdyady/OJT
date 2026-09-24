@@ -92,8 +92,9 @@ test("local RLS separates trainees, permits admin attendance management, and pre
       entry.id,
     );
     checked(await b.from("profiles").select().eq("id", other.id).single());
-    checked(
-      await b.from("dtr_entries").update({ check_in: null }).eq("id", entry.id).select().single(),
+    assert.deepEqual(
+      checked(await b.from("dtr_entries").update({ check_in: null }).eq("id", entry.id).select()),
+      [],
     );
     const editedProfile = checked(
       await b.rpc("dtr_admin_update_trainee_profile", {
@@ -208,7 +209,7 @@ test("local RLS separates trainees, permits admin attendance management, and pre
         })
       ).error,
     );
-    checked(await b.from("dtr_entries").delete().eq("id", entry.id).select().single());
+    assert.deepEqual(checked(await b.from("dtr_entries").delete().eq("id", entry.id).select()), []);
     await a.auth.signOut();
     await b.auth.signOut();
   } finally {

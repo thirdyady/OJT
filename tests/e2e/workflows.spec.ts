@@ -1,3 +1,4 @@
+import { setupChief, saveCorrection } from "../chief-fixture.mjs";
 import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { toJSONAsync } from "seroval";
@@ -19,6 +20,7 @@ async function waitForHydration(page: import("@playwright/test").Page) {
 }
 
 test.beforeAll(async () => {
+  await setupChief();
   userId = checked(
     await local.admin.auth.admin.createUser({
       email,
@@ -72,7 +74,7 @@ test("the root URL redirects signed-out visitors to sign in", async ({ page }) =
   await expect(page.getByRole("heading", { name: "Sign in to your DTR" })).toBeVisible();
 });
 
-test("attendance persists, failed writes stay unsaved, undo needs confirmation, admin can edit, inspect and clear", async ({
+test("attendance persists, failed writes stay unsaved, undo is unavailable, admin can edit, inspect and clear", async ({
   page,
 }) => {
   await page.goto("/dashboard");
@@ -120,13 +122,8 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await stalePage.close();
   await page.reload();
   await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await page.getByRole("button", { name: "Undo last" }).click();
-  await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Undo last" }).click();
-  await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeVisible();
-  for (const label of ["Check In", "Break Out", "Break In", "Check Out"]) {
+  await expect(page.getByRole("button", { name: /Undo last/i })).toHaveCount(0);
+  for (const label of ["Break Out", "Break In", "Check Out"]) {
     await page.getByRole("button", { name: `${label} now`, exact: true }).click();
   }
   await expect(page.getByText(/Day complete/)).toBeVisible();
@@ -137,13 +134,15 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await page.getByLabel("Email", { exact: true }).fill(adminEmail);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "OJT Attendance · Admin" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "PSA Attendance · Admin" })).toBeVisible();
   await expect(page.getByAltText("Philippine Statistics Authority")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Manage Accounts" })).toBeVisible();
   await page.getByPlaceholder("Search name, ID, company…").fill(updatedStudentId);
   await page.getByRole("button", { name: /Browser Test Trainee/ }).click();
   await expect(
-    page.getByRole("region", { name: "Account profile", exact: true }).getByText("Browser Test Intern", { exact: true }),
+    page
+      .getByRole("region", { name: "Account profile", exact: true })
+      .getByText("Browser Test Intern", { exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Full Name", { exact: true })).toHaveValue("Browser Test Trainee");
   await page.getByLabel("Full Name", { exact: true }).fill("Browser Test Trainee Updated");
@@ -166,11 +165,11 @@ test("attendance persists, failed writes stay unsaved, undo needs confirmation, 
   await expect(page.getByText("Active", { exact: true })).toBeVisible();
   const clear = page.getByTitle("Clear Check Out").filter({ visible: true });
   await expect(clear).toBeVisible();
-  page.once("dialog", (dialog) => dialog.dismiss());
   await clear.click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(clear).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await clear.click();
+  await saveCorrection(page);
   await expect(clear).toHaveCount(0);
 });
 

@@ -25,7 +25,7 @@ const args = (date, row = {}, action = "check_in", undo = false) => ({
   expected_check_out: row.check_out ?? null,
 });
 
-async function fixture(run) {
+async function fixture(run, accountType = "ojt") {
   const users = [];
   try {
     for (const isAdmin of [false, true]) {
@@ -37,6 +37,10 @@ async function fixture(run) {
           password,
           email_confirm: true,
           user_metadata: metadata,
+          app_metadata: {
+            dtr_account_type: accountType,
+            dtr_required_workdays: accountType === "processing" ? 10 : null,
+          },
         }),
       );
       users.push({ ...user, client: local.client() });
@@ -110,15 +114,66 @@ test("trainee API cannot forge history, skip order, overwrite stale punches, or 
       row = checked(await c.rpc("dtr_punch", args(today, row, action)));
     assert.ok((await c.rpc("dtr_punch", args(today, row, "check_in", true))).error);
     for (const action of [...fields].reverse()) {
-      row = checked(await c.rpc("dtr_punch", args(today, row, action, true)));
-      assert.equal(row[action], null);
+      const denied = await c.rpc("dtr_punch", args(today, row, action, true));
+      assert.equal(denied.error.code, "42501");
+      assert.deepEqual(
+        checked(await c.from("dtr_entries").select().eq("id", row.id).single()),
+        row,
+      );
     }
     assert.equal(
       checked(await admin.client.from("dtr_entries").delete().eq("id", row.id).select()).length,
-      1,
+      0,
     );
   });
 });
+
+for (const type of ["ojt", "job_order", "processing", "regular_employee"]) {
+  test(`${type}: each punch persists, direct undo is rejected, direct admin correction requires Chief approval`, async () => {
+    await fixture(async (user, admin, today) => {
+      let row = {};
+      for (const action of fields) {
+        row = checked(await user.client.rpc("dtr_punch", args(today, row, action)));
+        assert.ok(row[action]);
+        for (const undo of [true, null]) {
+          const denied = await user.client.rpc("dtr_punch", args(today, row, action, undo));
+          assert.equal(denied.error.code, "42501");
+          assert.deepEqual(
+            checked(await user.client.from("dtr_entries").select().eq("id", row.id).single()),
+            row,
+          );
+        }
+      }
+      assert.deepEqual(
+        checked(
+          await user.client
+            .from("dtr_entries")
+            .update({ check_out: null })
+            .eq("id", row.id)
+            .select(),
+        ),
+        [],
+      );
+      assert.deepEqual(
+        checked(
+          await admin.client
+            .from("dtr_entries")
+            .update({ check_out: null })
+            .eq("id", row.id)
+            .select(),
+        ),
+        [],
+      );
+      // Trusted fixture correction simulates a committed Chief-approved change;
+      // actual approval and audit behavior is covered in local-chief-approval.
+      checked(await local.admin.from("dtr_entries").update({ check_out: null }).eq("id", row.id));
+      assert.equal(
+        (await user.client.rpc("dtr_punch", args(today, row, "check_out"))).error.code,
+        "40001",
+      );
+    }, type);
+  });
+}
 
 test("inactive existing sessions cannot use the attendance RPC; reactivation restores it", async () => {
   await fixture(async (trainee, admin, today) => {

@@ -1,3 +1,4 @@
+import { setupChief, deleteWithChief, prepareChief, chiefPassword } from "./chief-fixture.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -8,13 +9,10 @@ import { localSupabase, checked } from "../scripts/local-supabase.mjs";
 const local = localSupabase();
 const sql = postgres(local.databaseUrl, { max: 3, idle_timeout: 1 });
 const rpc = (actor, target, confirmation = target) =>
-  local.admin.rpc("dtr_delete_unused_trainee", {
-    actor_user_id: actor,
-    target_user_id: target,
-    confirmation,
-  });
+  deleteWithChief(local, actor, target, confirmation);
 
 async function fixture(run) {
+  await setupChief();
   const users = [];
   const password = `Deletion!${randomUUID()}`;
   try {
@@ -63,11 +61,11 @@ test("deletion RPC requires the server, a current active admin, a trainee and ex
       "even admins must use the server",
     );
     await browser.auth.signOut();
-    assert.match((await rpc(admin.id, admin.id)).error.message, /own account/);
+    assert.match((await rpc(admin.id, admin.id)).error.message, /Administrator accounts/);
     assert.match((await rpc(admin.id, trainee.id, randomUUID())).error.message, /exact account ID/);
-    assert.match((await rpc(trainee.id, admin.id)).error.message, /active DTR administrators/);
+    assert.match((await rpc(trainee.id, admin.id)).error.message, /administrator/i);
     checked(await local.admin.from("profiles").update({ is_active: false }).eq("id", admin.id));
-    assert.match((await rpc(admin.id, trainee.id)).error.message, /active DTR administrators/);
+    assert.match((await rpc(admin.id, trainee.id)).error.message, /administrator/i);
     checked(await local.admin.from("profiles").update({ is_active: true }).eq("id", admin.id));
     checked(await local.admin.from("profiles").update({ is_admin: true }).eq("id", trainee.id));
     assert.match((await rpc(admin.id, trainee.id)).error.message, /Administrator accounts/);
@@ -88,7 +86,7 @@ test("any DTR row blocks RPC and direct Auth deletion, preserving profile and at
         .select()
         .single(),
     );
-    assert.match((await rpc(admin.id, trainee.id)).error.message, /DTR history/);
+    assert.match((await rpc(admin.id, trainee.id)).error.message, /historical/);
     assert.ok((await local.admin.auth.admin.deleteUser(trainee.id)).error);
     assert.equal(
       checked(await local.admin.from("profiles").select("id").eq("id", trainee.id).single()).id,
@@ -121,7 +119,7 @@ test("unused account deletion removes Auth, profile and sessions and blocks the 
       (await client.from("dtr_entries").insert({ user_id: trainee.id, entry_date: "2000-01-02" }))
         .error,
     );
-    assert.match((await rpc(admin.id, trainee.id)).error.message, /not found/);
+    assert.match((await rpc(admin.id, trainee.id)).error.message, /not found/i);
     await client.auth.signOut();
   });
 });
@@ -148,6 +146,10 @@ async function waitForBlocked(pid) {
 for (const insertFirst of [true, false]) {
   test(`concurrent attendance and deletion: ${insertFirst ? "insert commits first, deletion fails" : "deletion commits first, insert fails"}`, async () => {
     await fixture(async (admin, trainee) => {
+      const pendingApproval = await prepareChief(local, admin.id, "delete_account", {
+        targetUserId: trainee.id,
+        confirmation: trainee.id,
+      });
       const acquired = gate();
       const release = gate();
       const holder = postgres(local.databaseUrl, { max: 1 });
@@ -159,7 +161,9 @@ for (const insertFirst of [true, false]) {
           await tx`INSERT INTO public.dtr_entries (user_id, entry_date) VALUES (${trainee.id}, '2000-01-03')`;
         } else {
           await tx`SELECT set_config('request.jwt.claim.role', 'service_role', true)`;
-          await tx`SELECT public.dtr_delete_unused_trainee(${admin.id}::uuid, ${trainee.id}::uuid, ${trainee.id})`;
+          const [approved] =
+            await tx`SELECT public.dtr_chief_approve(${admin.id}::uuid, ${pendingApproval.requestId}::uuid, ${chiefPassword}, NULL) AS result`;
+          assert.equal(approved.result.ok, true);
         }
         acquired.resolve(pid);
         await release.promise;

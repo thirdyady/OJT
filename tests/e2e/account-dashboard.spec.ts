@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { localSupabase, checked } from "../../scripts/local-supabase.mjs";
 
 const local = localSupabase();
@@ -88,6 +89,19 @@ for (const type of types)
       await expect(profile).toContainText("Analyst");
       await expect(profile).not.toContainText("Student ID");
     }
+    await expect(page.getByRole("button", { name: /Undo last/i })).toHaveCount(0);
+    if (type !== "ojt") await expect(page.locator("body")).not.toContainText("OJT");
+    await page.getByRole("button", { name: "Print DTR", exact: true }).click();
+    await expect(page.frameLocator("iframe").locator(".profile-line").first()).toHaveText(
+      `${type === "ojt" ? "OJT Title" : "Position"}: Analyst`,
+    );
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download Word", exact: true }).click();
+    const word = await readFile((await (await download).path())!, "utf8");
+    expect(word).toContain(
+      `${type === "ojt" ? "OJT Title" : "Position"}: <strong>Analyst</strong>`,
+    );
+    if (type !== "ojt") expect(word).not.toContain("OJT Title");
     const client = local.client();
     checked(await client.auth.signInWithPassword({ email: user.email, password }));
     try {

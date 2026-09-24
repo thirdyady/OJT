@@ -31,6 +31,8 @@ for (const type of ["job_order", "regular_employee"])
     );
     assert.equal(p.unit, null);
     assert.equal(p.target, null);
+    assert.equal(p.credited, null);
+    assert.equal(p.remaining, null);
     assert.equal(p.percentage, null);
     assert.equal(p.hours, 16);
     assert.equal(p.days, 2);

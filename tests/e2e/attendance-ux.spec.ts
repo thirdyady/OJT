@@ -1,3 +1,4 @@
+import { setupChief, saveCorrection } from "../chief-fixture.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { localSupabase, checked } from "../../scripts/local-supabase.mjs";
@@ -27,6 +28,7 @@ async function todayKey(page: Page) {
 }
 
 test.beforeEach(async () => {
+  await setupChief();
   const password = `Attendance!${randomUUID()}`;
   const traineeName = `UX Trainee ${randomUUID().slice(0, 8)}`;
   const traineeEmail = `${randomUUID()}@ojt.local.test`;
@@ -81,7 +83,7 @@ test.afterEach(async () => {
   }
 });
 
-test("rapid clicks save once, the full sequence works, and undo confirms every step", async ({
+test("rapid clicks save once, the full sequence works, and self-service undo is unavailable", async ({
   page,
 }) => {
   await login(page, trainee);
@@ -108,18 +110,9 @@ test("rapid clicks save once, the full sequence works, and undo confirms every s
   await page.getByRole("button", { name: "Check Out now", exact: true }).click();
   await expect(page.getByText(/Day complete/)).toBeVisible();
 
-  const dialogMessages: string[] = [];
-  for (const next of ["Check Out", "Break In", "Break Out", "Check In"]) {
-    page.once("dialog", (dialog) => {
-      dialogMessages.push(dialog.message());
-      dialog.accept();
-    });
-    await page.getByRole("button", { name: "Undo last", exact: true }).click();
-    await expect(page.getByRole("button", { name: `${next} now`, exact: true })).toBeVisible();
-  }
-  expect(dialogMessages).toHaveLength(4);
-  expect(dialogMessages[0]).toContain("Undo Check Out recorded at");
-  expect(dialogMessages[0]).toContain("reopens it as the next step");
+  await expect(page.getByRole("button", { name: /Undo last/i })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText(/Day complete/)).toBeVisible();
 });
 
 test("failed saves remain unsaved and stale tabs get an explicit reload action", async ({
@@ -207,13 +200,9 @@ test("an admin-cleared punch is reported as stale and can be refreshed safely", 
     await adminPage.getByRole("button", { name: new RegExp(trainee.name) }).click();
     const clearBreakOut = adminPage.locator('button[title="Clear Break Out"]:visible');
     await expect(clearBreakOut).toBeVisible();
-    let confirmation = "";
-    adminPage.once("dialog", (dialog) => {
-      confirmation = dialog.message();
-      dialog.accept();
-    });
     await clearBreakOut.click();
-    expect(confirmation).toContain("may make the day incomplete");
+    await saveCorrection(adminPage);
+    await expect(adminPage.getByRole("alertdialog")).toHaveCount(0);
   } finally {
     await adminContext.close();
   }
@@ -272,49 +261,32 @@ test("warnings agree with valid no-break days and checkout at break-in", async (
   await expect(page.getByText(/Completed.*0\.00 hrs/)).toBeVisible();
 });
 
-test("stale full-entry deletion preserves newer punches until reload and reconfirmation", async ({
-  page,
-}) => {
+test("stale Chief-approved correction preserves newer punches", async ({ page }) => {
   await login(page, admin);
   const date = await todayKey(page);
   const row = checked(
     await local.admin
       .from("dtr_entries")
-      .insert({
-        user_id: trainee.id,
-        entry_date: date,
-        check_in: `${date}T08:00:00+08:00`,
-      })
+      .insert({ user_id: trainee.id, entry_date: date, check_in: date + "T08:00:00+08:00" })
       .select()
       .single(),
   );
   await page.getByRole("button", { name: new RegExp(trainee.name) }).click();
-  const remove = page
-    .getByRole("button", { name: "Delete", exact: true })
-    .filter({ visible: true });
-  await expect(remove).toBeVisible();
-  const checkOut = `${date}T17:00:00+08:00`;
-  checked(await local.admin.from("dtr_entries").update({ check_out: checkOut }).eq("id", row.id));
-  page.once("dialog", (dialog) => dialog.accept());
-  await remove.click();
-  await expect(page.getByRole("alert")).toContainText("changed in another tab");
-  const saved = checked(
-    await local.admin.from("dtr_entries").select("check_out").eq("id", row.id).single(),
+  await page.getByTitle("Clear Check In").filter({ visible: true }).click();
+  checked(
+    await local.admin
+      .from("dtr_entries")
+      .update({ check_out: date + "T17:00:00+08:00" })
+      .eq("id", row.id),
   );
-  expect(Date.parse(saved.check_out)).toBe(Date.parse(checkOut));
-
-  await page.getByRole("button", { name: "Reload records", exact: true }).click();
-  await page.getByRole("button", { name: new RegExp(trainee.name) }).click();
-  await expect(remove).toBeVisible();
-  page.once("dialog", (dialog) => dialog.dismiss());
-  await remove.click();
-  await expect(remove).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
-  await remove.click();
-  await expect(remove).toHaveCount(0);
-  expect(checked(await local.admin.from("dtr_entries").select("id").eq("id", row.id))).toHaveLength(
-    0,
-  );
+  await saveCorrection(page);
+  await expect(page.getByRole("alert")).toContainText("Attendance changed");
+  expect(
+    checked(await local.admin.from("dtr_entries").select("check_out").eq("id", row.id).single())
+      .check_out,
+  ).toBeTruthy();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
 });
 
 test("attendance remains usable by keyboard at a narrow mobile width", async ({ page }) => {

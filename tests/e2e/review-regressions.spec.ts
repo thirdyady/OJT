@@ -1,3 +1,4 @@
+import { setupChief, saveCorrection } from "../chief-fixture.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -8,6 +9,7 @@ const password = `Regression!${randomUUID()}`;
 const users: { id: string; email: string; name: string }[] = [];
 
 test.beforeAll(async () => {
+  await setupChief();
   for (const name of ["Regression Admin", "Regression A", "Regression B"]) {
     const email = `${randomUUID()}@ojt.local.test`;
     const { user } = checked(
@@ -198,8 +200,9 @@ test("clearing a break keeps admin, trainee, CSV and progress hours consistent",
   await page.getByLabel("Select month to view/print/download").selectOption("0");
   await page.getByLabel("Select year to view/print/download").selectOption("2000");
   await expect(page.getByText(/Total: 8.00 hrs across 1 day/)).toBeVisible();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTitle("Clear Break In").filter({ visible: true }).click();
+  await page.getByLabel("Check Out", { exact: true }).fill("");
+  await saveCorrection(page);
   await expect(page.getByText(/Total: 0.00 hrs across 1 day/)).toBeVisible();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await login(page, 1);
