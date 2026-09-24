@@ -1,15 +1,18 @@
+import {
+  ChiefApproval,
+  ChiefSettings,
+  DtrEditor,
+  type EditableDtr,
+} from "@/components/chief-approval";
+import type { ChiefRequest } from "@/lib/chief-input";
 import { accountLabels } from "@/lib/account-progress.mjs";
 import { AccountProfileSummary, AccountProgressSummary } from "@/components/account-summary";
 import type { Enums } from "@/integrations/supabase/types";
 import { CreateAccountForm } from "@/components/create-account-form";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import {
-  deleteUnusedTraineeAccount,
-  type CreatedTraineeProfile,
-} from "@/lib/admin-account.functions";
+import { type CreatedTraineeProfile } from "@/lib/admin-account.functions";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -32,7 +35,7 @@ import {
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({
     meta: [
-      { title: "My DTR · OJT Attendance" },
+      { title: "My DTR · PSA Attendance" },
       {
         name: "description",
         content:
@@ -62,6 +65,7 @@ type DtrRow = {
 type DtrReportProfile = {
   fullName: string;
   ojtTitle: string | null;
+  accountType: Enums<"account_type">;
 };
 
 type Profile = {
@@ -321,7 +325,7 @@ function buildDtrHtmlFor(
       <div class="name-block">
         <div class="name-value">${escapeHtml(fullName)}</div>
       </div>
-      <div class="profile-line">OJT Title: <strong>${escapeHtml(ojtTitle)}</strong></div>
+      <div class="profile-line">${profile.accountType === "ojt" ? "OJT Title" : "Position"}: <strong>${escapeHtml(ojtTitle)}</strong></div>
       <div class="month-line">For the month of: &nbsp;<strong>${monthLabel}</strong></div>
       <table>
         <thead>
@@ -512,7 +516,7 @@ function downloadWordDtrFor(
     border:none;
     padding:2px 0 1px;
     font-family:Arial,sans-serif;
-  ">OJT Title: <strong>${escapeHtml(ojtTitle)}</strong></td>
+  ">${profile.accountType === "ojt" ? "OJT Title" : "Position"}: <strong>${escapeHtml(ojtTitle)}</strong></td>
 </tr>
 <tr>
   <td colspan="5" style="
@@ -867,55 +871,6 @@ function DashboardPage() {
     }
   };
 
-  const undoLast = async () => {
-    if (!userId || !today.id || attendanceLock.current) return;
-    attendanceLock.current = true;
-    setSavingAttendance(true);
-    setActionError("");
-    setAttendanceConflict(false);
-    try {
-      if (!(await ensureActiveSession())) return;
-      const filled = ORDER.filter((p) => today[p]);
-      const last = filled[filled.length - 1];
-      if (!last) return;
-      if (
-        !window.confirm(
-          `Undo ${LABELS[last]} recorded at ${fmtTime(today[last])}?\n\nThis removes the saved punch and reopens it as the next step.`,
-        )
-      )
-        return;
-      const { data, error } = await supabase.rpc("dtr_punch", {
-        action: last,
-        expected_date: key,
-        expected_id: today.id,
-        expected_check_in: today.check_in,
-        expected_break_out: today.break_out,
-        expected_break_in: today.break_in,
-        expected_check_out: today.check_out,
-        undo: true,
-      });
-      if (error) {
-        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
-        throw new Error(`Undo was not saved. ${error.message}`);
-      }
-      if (!data) throw new AttendanceConflictError();
-      setRows((prev) => prev.map((r) => (r.id === data.id ? data : r)));
-    } catch (error) {
-      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
-      setAttendanceConflict(conflict);
-      setActionError(
-        conflict
-          ? ATTENDANCE_CONFLICT_MESSAGE
-          : error instanceof Error
-            ? error.message
-            : "Undo was not saved. Check your connection and try again.",
-      );
-    } finally {
-      attendanceLock.current = false;
-      setSavingAttendance(false);
-    }
-  };
-
   const saveProfile = async () => {
     if (!userId || profileLock.current) return;
     const missing = missingProfileFields(profile);
@@ -1039,7 +994,11 @@ function DashboardPage() {
   const printDtr = async () => {
     if (!(await ensureActiveSession())) return;
     printDtrFor(
-      { fullName: profile.full_name || "", ojtTitle: profile.ojt_title },
+      {
+        fullName: profile.full_name || "",
+        ojtTitle: profile.ojt_title,
+        accountType: profile.account_type,
+      },
       rows,
       downloadMonth,
       downloadYear,
@@ -1049,7 +1008,11 @@ function DashboardPage() {
   const downloadWordDtr = async () => {
     if (!(await ensureActiveSession())) return;
     downloadWordDtrFor(
-      { fullName: profile.full_name || "", ojtTitle: profile.ojt_title },
+      {
+        fullName: profile.full_name || "",
+        ojtTitle: profile.ojt_title,
+        accountType: profile.account_type,
+      },
       rows,
       downloadMonth,
       downloadYear,
@@ -1088,7 +1051,7 @@ function DashboardPage() {
             />
             <div>
               <h1 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
-                OJT Attendance · {profile.is_admin ? "Admin" : "DTR"}
+                PSA Attendance · {profile.is_admin ? "Admin" : "DTR"}
               </h1>
               <p className="text-xs text-slate-500">
                 Signed in as {profile.full_name || email}
@@ -1323,14 +1286,6 @@ function DashboardPage() {
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
                   Today · {fmtDate(key)}
                 </h2>
-                <button
-                  onClick={undoLast}
-                  disabled={savingAttendance || !today.id || !ORDER.some((p) => today[p])}
-                  aria-busy={savingAttendance}
-                  className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {savingAttendance ? "Saving…" : "Undo last"}
-                </button>
               </div>
 
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1597,15 +1552,15 @@ function ProfileField({
 type TraineeDtr = DtrRow & { user_id: string };
 
 function AdminDashboard() {
-  const deleteAccount = useServerFn(deleteUnusedTraineeAccount);
+  const [chiefRequest, setChiefRequest] = useState<ChiefRequest | null>(null);
+  const [editor, setEditor] = useState<{ userId: string; initial?: EditableDtr } | null>(null);
   const [deletionTarget, setDeletionTarget] = useState<TraineeRow | null>(null);
   const [deletionConfirmation, setDeletionConfirmation] = useState("");
-  const [deletingAccount, setDeletingAccount] = useState(false);
+  const deletingAccount = chiefRequest?.operation === "delete_account";
   const [deletionError, setDeletionError] = useState("");
   const [deletionSuccess, setDeletionSuccess] = useState("");
-  const mutationLock = useRef(false);
   const requestVersion = useRef(0);
-  const [mutating, setMutating] = useState(false);
+  const mutating = Boolean(chiefRequest || editor);
   const [trainees, setTrainees] = useState<TraineeRow[]>([]);
   const [loadingTrainees, setLoadingTrainees] = useState(true);
   const [traineeError, setTraineeError] = useState<string | null>(null);
@@ -1700,100 +1655,13 @@ function AdminDashboard() {
     }
   };
 
-  const deleteEntry = async (entryId: string) => {
-    if (mutationLock.current) return;
+  const deleteEntry = (entryId: string) => {
     const entry = entries.find((row) => row.id === entryId);
-    if (!entry) return;
-    if (
-      !window.confirm(
-        "Delete this entire DTR entry? This permanently removes all four punches for that date and cannot be undone.",
-      )
-    )
-      return;
-    mutationLock.current = true;
-    setMutating(true);
-    setMutationError("");
-    setMutationConflict(false);
-    try {
-      let query = supabase
-        .from("dtr_entries")
-        .delete()
-        .eq("id", entryId)
-        .eq("user_id", entry.user_id)
-        .eq("entry_date", entry.entry_date);
-      // Delete only the exact attendance values the admin reviewed. A change
-      // in another session must require reloading and confirming again.
-      for (const field of ORDER) {
-        query = entry[field] ? query.eq(field, entry[field]!) : query.is(field, null);
-      }
-      const { data, error } = await query.select("id").single();
-      if (error) {
-        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
-        throw new Error("The DTR entry was not deleted. Check your connection and try again.");
-      }
-      if (!data) throw new AttendanceConflictError();
-      setEntries((prev) => prev.filter((e) => e.id !== entryId));
-    } catch (error) {
-      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
-      setMutationConflict(conflict);
-      setMutationError(
-        conflict
-          ? "This DTR entry changed in another tab. Reload records before trying again. No changes were made."
-          : error instanceof Error
-            ? error.message
-            : "The DTR entry was not deleted. Check your connection and try again.",
-      );
-    } finally {
-      mutationLock.current = false;
-      setMutating(false);
-    }
+    if (entry) setEditor({ userId: entry.user_id, initial: entry });
   };
-
-  const clearPunch = async (entryId: string, field: Punch) => {
-    if (mutationLock.current) return;
-    const entry = entries.find((r) => r.id === entryId);
-    if (!entry?.[field]) return;
-    if (
-      !window.confirm(
-        `Clear ${LABELS[field]} recorded at ${fmtTime(entry[field])} on ${entry.entry_date}?\n\nThis removes that punch from the trainee's DTR and may make the day incomplete.`,
-      )
-    )
-      return;
-    mutationLock.current = true;
-    setMutating(true);
-    setMutationError("");
-    setMutationConflict(false);
-    try {
-      let query = supabase
-        .from("dtr_entries")
-        .update(punchValue(field, null))
-        .eq("id", entryId)
-        .eq("user_id", entry.user_id);
-      for (const punchField of ORDER) {
-        query = entry[punchField]
-          ? query.eq(punchField, entry[punchField]!)
-          : query.is(punchField, null);
-      }
-      const { data, error } = await query.select().single();
-      if (error) {
-        if (isAttendanceConflict(error)) throw new AttendanceConflictError();
-        throw new Error("The punch was not cleared. Check your connection and try again.");
-      }
-      setEntries((prev) => prev.map((e) => (e.id === entryId ? data : e)));
-    } catch (error) {
-      const conflict = error instanceof AttendanceConflictError || isAttendanceConflict(error);
-      setMutationConflict(conflict);
-      setMutationError(
-        conflict
-          ? "This DTR entry changed in another tab. Reload records before trying again. No changes were made."
-          : error instanceof Error
-            ? error.message
-            : "The punch was not cleared. Check your connection and try again.",
-      );
-    } finally {
-      mutationLock.current = false;
-      setMutating(false);
-    }
+  const clearPunch = (entryId: string, field: Punch) => {
+    const entry = entries.find((row) => row.id === entryId);
+    if (entry) setEditor({ userId: entry.user_id, initial: { ...entry, [field]: null } });
   };
 
   const saveTraineeProfile = async () => {
@@ -1875,7 +1743,7 @@ function AdminDashboard() {
     if (
       !nextActive &&
       !window.confirm(
-        "Deactivate this trainee account? Their profile and attendance history will be preserved, but they will be signed out and blocked from DTR operations.",
+        "Deactivate this account? Their profile and attendance history will be preserved, but they will be signed out and blocked from DTR operations.",
       )
     )
       return;
@@ -1907,58 +1775,13 @@ function AdminDashboard() {
 
   const selectedTrainee = trainees.find((t) => t.id === selectedId);
 
-  const confirmAccountDeletion = async () => {
-    if (!deletionTarget || deletionConfirmation !== deletionTarget.id || mutationLock.current)
-      return;
-    const target = deletionTarget;
-    mutationLock.current = true;
-    setDeletingAccount(true);
-    setMutating(true);
-    setDeletionError("");
-    setDeletionSuccess("");
-    try {
-      const { deletedId } = await deleteAccount({
-        data: { targetUserId: target.id, confirmation: deletionConfirmation },
-      });
-      ++requestVersion.current;
-      setTrainees((current) => current.filter((trainee) => trainee.id !== deletedId));
-      setSelectedId(null);
-      setEntries([]);
-      setLoadingEntries(false);
-      setDeletionTarget(null);
-      setDeletionConfirmation("");
-      setDeletionSuccess(`Permanently deleted ${target.full_name || target.id}.`);
-    } catch (error) {
-      setDeletionError(
-        error instanceof Error
-          ? error.message
-          : "Deletion was not confirmed. Refresh before retrying.",
-      );
-      // The server may have committed before a response was lost. Reconcile
-      // with the database rather than claiming failure means nothing changed.
-      const refreshed = await loadProfiles()
-        .then((data) => ({ data, error: null }))
-        .catch((error: unknown) => ({ data: null, error }));
-      if (!refreshed.error && refreshed.data) {
-        setTrainees(refreshed.data);
-        if (!refreshed.data.some((trainee) => trainee.id === target.id)) {
-          ++requestVersion.current;
-          setSelectedId(null);
-          setEntries([]);
-          setLoadingEntries(false);
-          setDeletionTarget(null);
-          setDeletionError(
-            "Deletion response was not confirmed. The refreshed account list no longer contains this account.",
-          );
-        } else {
-          await loadEntries(target.id);
-        }
-      }
-    } finally {
-      mutationLock.current = false;
-      setDeletingAccount(false);
-      setMutating(false);
-    }
+  const confirmAccountDeletion = () => {
+    if (!deletionTarget || deletionConfirmation !== deletionTarget.id) return;
+    setChiefRequest({
+      requestId: crypto.randomUUID(),
+      operation: "delete_account",
+      payload: { targetUserId: deletionTarget.id, confirmation: deletionConfirmation },
+    });
   };
 
   const filteredTrainees = useMemo(() => {
@@ -2010,7 +1833,11 @@ function AdminDashboard() {
   const printSelectedDtr = () => {
     if (!selectedTrainee) return;
     printDtrFor(
-      { fullName: selectedTrainee.full_name || "", ojtTitle: selectedTrainee.ojt_title },
+      {
+        fullName: selectedTrainee.full_name || "",
+        ojtTitle: selectedTrainee.ojt_title,
+        accountType: selectedTrainee.account_type,
+      },
       entries,
       docMonth,
       docYear,
@@ -2020,7 +1847,11 @@ function AdminDashboard() {
   const downloadSelectedWordDtr = () => {
     if (!selectedTrainee) return;
     downloadWordDtrFor(
-      { fullName: selectedTrainee.full_name || "", ojtTitle: selectedTrainee.ojt_title },
+      {
+        fullName: selectedTrainee.full_name || "",
+        ojtTitle: selectedTrainee.ojt_title,
+        accountType: selectedTrainee.account_type,
+      },
       entries,
       docMonth,
       docYear,
@@ -2034,8 +1865,8 @@ function AdminDashboard() {
           Manage Accounts
         </h2>
         <p className="text-xs text-slate-500">
-          Use deactivation for routine removal; it preserves the trainee's profile and DTR history.
-          Permanent deletion is only available for trainee accounts with no DTR records.
+          Use deactivation for routine removal; it preserves the account's profile and DTR history.
+          Permanent deletion is only available for accounts with no DTR records.
         </p>
       </div>
       {deletionSuccess && (
@@ -2049,7 +1880,7 @@ function AdminDashboard() {
         </p>
       )}
       <AlertDialog
-        open={Boolean(deletionTarget)}
+        open={Boolean(deletionTarget) && !chiefRequest}
         onOpenChange={(open) => {
           if (!open && !deletingAccount) {
             setDeletionTarget(null);
@@ -2058,11 +1889,11 @@ function AdminDashboard() {
           }
         }}
       >
-        <AlertDialogContent data-admin-delete-account-endpoint={deleteUnusedTraineeAccount.url}>
+        <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Permanently delete trainee account?</AlertDialogTitle>
+            <AlertDialogTitle>Permanently delete account?</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently removes {deletionTarget?.full_name || "this trainee"}'s sign-in
+              This permanently removes {deletionTarget?.full_name || "this account"}'s sign-in
               account, profile, and authentication sessions. It cannot be undone. Accounts with any
               DTR records are protected. Choose deactivation to retain the account instead.
             </AlertDialogDescription>
@@ -2099,6 +1930,42 @@ function AdminDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <ChiefSettings />
+      {editor && (
+        <DtrEditor
+          key={editor.userId}
+          userId={editor.userId}
+          rows={entries}
+          initial={editor.initial}
+          onClose={() => setEditor(null)}
+          onSaved={() => {
+            setMutationError("");
+            setDeletionSuccess("DTR correction saved with Chief approval.");
+            void loadEntries(editor.userId);
+          }}
+        />
+      )}
+      {chiefRequest && (
+        <ChiefApproval
+          request={chiefRequest}
+          onClose={() => {
+            setChiefRequest(null);
+            setDeletionTarget(null);
+            setDeletionConfirmation("");
+          }}
+          onComplete={(result) => {
+            setChiefRequest(null);
+            setDeletionTarget(null);
+            setDeletionConfirmation("");
+            setDeletionSuccess("Account permanently deleted with Chief approval.");
+            if (result.deletedId) {
+              setTrainees((current) => current.filter((t) => t.id !== result.deletedId));
+              setSelectedId(null);
+              setEntries([]);
+            }
+          }}
+        />
+      )}
       <CreateAccountForm
         disabled={deletingAccount}
         onCreated={accountCreated}
@@ -2202,7 +2069,7 @@ function AdminDashboard() {
               <h2 className="text-sm font-semibold text-slate-900">
                 {selectedTrainee
                   ? `${selectedTrainee.full_name || "Unnamed"}'s DTR`
-                  : "Select a trainee"}
+                  : "Select an account"}
               </h2>
               {selectedTrainee && (
                 <p className="text-xs text-slate-500">
@@ -2404,7 +2271,7 @@ function AdminDashboard() {
                 )}
               </div>
             )}
-            {selectedTrainee && entries.length > 0 && (
+            {selectedTrainee && (
               <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
                 <select
                   value={docMonth}
@@ -2443,6 +2310,18 @@ function AdminDashboard() {
                   Print DTR
                 </button>
                 <button
+                  onClick={() => selectedId && setEditor({ userId: selectedId })}
+                  disabled={
+                    !selectedId ||
+                    selectedTrainee.is_admin ||
+                    loadingEntries ||
+                    Boolean(entriesError)
+                  }
+                  className="rounded border px-3 py-2 text-sm"
+                >
+                  Edit DTR
+                </button>
+                <button
                   onClick={downloadSelectedWordDtr}
                   className="col-span-2 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 sm:col-span-1"
                 >
@@ -2454,7 +2333,7 @@ function AdminDashboard() {
 
           {!selectedId ? (
             <p className="px-5 py-10 text-center text-sm text-slate-400">
-              Pick a trainee from the list to view their records.
+              Pick an account from the list to view their records.
             </p>
           ) : entriesError ? (
             <p className="px-5 py-10 text-center text-sm text-red-600">
@@ -2465,7 +2344,7 @@ function AdminDashboard() {
             <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>
           ) : entries.length === 0 ? (
             <p className="px-5 py-10 text-center text-sm text-slate-400">
-              No records for this trainee yet.
+              No records for this account yet.
             </p>
           ) : visibleEntries.length === 0 ? (
             <p className="px-5 py-10 text-center text-sm text-slate-400">
@@ -2489,7 +2368,8 @@ function AdminDashboard() {
                           onClick={() => deleteEntry(r.id!)}
                           className="text-xs font-medium text-red-600 hover:underline"
                         >
-                          Delete
+                          {" "}
+                          Edit DTR{" "}
                         </button>
                       </div>
                     </div>
@@ -2560,7 +2440,8 @@ function AdminDashboard() {
                             onClick={() => deleteEntry(r.id!)}
                             className="text-xs font-medium text-red-600 hover:underline"
                           >
-                            Delete
+                            {" "}
+                            Edit DTR{" "}
                           </button>
                         </td>
                       </tr>

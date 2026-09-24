@@ -3,6 +3,57 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      dtr_admin_audit: {
+        Row: {
+          action: string;
+          actor_id: string;
+          actor_name: string | null;
+          affected_user: string | null;
+          approval_method: string;
+          created_at: string;
+          dtr_id: string | null;
+          entry_date: string | null;
+          id: string;
+          new_values: Json | null;
+          old_values: Json | null;
+          reason: string | null;
+          request_id: string;
+          ssp_version: number;
+        };
+        Insert: {
+          action: string;
+          actor_id: string;
+          actor_name?: string | null;
+          affected_user?: string | null;
+          approval_method: string;
+          created_at?: string;
+          dtr_id?: string | null;
+          entry_date?: string | null;
+          id?: string;
+          new_values?: Json | null;
+          old_values?: Json | null;
+          reason?: string | null;
+          request_id: string;
+          ssp_version: number;
+        };
+        Update: {
+          action?: string;
+          actor_id?: string;
+          actor_name?: string | null;
+          affected_user?: string | null;
+          approval_method?: string;
+          created_at?: string;
+          dtr_id?: string | null;
+          entry_date?: string | null;
+          id?: string;
+          new_values?: Json | null;
+          old_values?: Json | null;
+          reason?: string | null;
+          request_id?: string;
+          ssp_version?: number;
+        };
+        Relationships: [];
+      };
       dtr_entries: {
         Row: {
           break_in: string | null;
@@ -42,43 +93,43 @@ export type Database = {
       profiles: {
         Row: {
           account_type: Database["public"]["Enums"]["account_type"];
-          required_workdays: number | null;
           company: string | null;
           created_at: string;
           full_name: string | null;
           id: string;
-          is_admin: boolean;
           is_active: boolean;
+          is_admin: boolean;
           ojt_title: string | null;
           required_ojt_hours: number | null;
+          required_workdays: number | null;
           student_id: string | null;
           updated_at: string;
         };
         Insert: {
           account_type?: Database["public"]["Enums"]["account_type"];
-          required_workdays?: number | null;
           company?: string | null;
           created_at?: string;
           full_name?: string | null;
           id: string;
-          is_admin?: boolean;
           is_active?: boolean;
+          is_admin?: boolean;
           ojt_title?: string | null;
           required_ojt_hours?: number | null;
+          required_workdays?: number | null;
           student_id?: string | null;
           updated_at?: string;
         };
         Update: {
           account_type?: Database["public"]["Enums"]["account_type"];
-          required_workdays?: number | null;
           company?: string | null;
           created_at?: string;
           full_name?: string | null;
           id?: string;
-          is_admin?: boolean;
           is_active?: boolean;
+          is_admin?: boolean;
           ojt_title?: string | null;
           required_ojt_hours?: number | null;
+          required_workdays?: number | null;
           student_id?: string | null;
           updated_at?: string;
         };
@@ -89,44 +140,131 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
-      dtr_punch: {
-        Args: {
-          action: string;
-          expected_date: string;
-          expected_id: string | null;
-          expected_check_in: string | null;
-          expected_break_out: string | null;
-          expected_break_in: string | null;
-          expected_check_out: string | null;
-          undo?: boolean;
+      dtr_admin_set_account_active: {
+        Args: { target_active: boolean; target_user_id: string };
+        Returns: {
+          account_type: Database["public"]["Enums"]["account_type"];
+          company: string | null;
+          created_at: string;
+          full_name: string | null;
+          id: string;
+          is_active: boolean;
+          is_admin: boolean;
+          ojt_title: string | null;
+          required_ojt_hours: number | null;
+          required_workdays: number | null;
+          student_id: string | null;
+          updated_at: string;
         };
-        Returns: Database["public"]["Tables"]["dtr_entries"]["Row"];
+        SetofOptions: {
+          from: "*";
+          to: "profiles";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
       };
-      dtr_delete_unused_trainee: {
-        Args: { actor_user_id: string; target_user_id: string; confirmation: string };
-        Returns: string;
-      };
-      dtr_is_admin: { Args: never; Returns: boolean };
-      dtr_is_active: { Args: never; Returns: boolean };
       dtr_admin_set_required_ojt_hours: {
-        Args: { target_hours: number | null; target_user_id: string };
-        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+        Args: { target_hours: number; target_user_id: string };
+        Returns: {
+          account_type: Database["public"]["Enums"]["account_type"];
+          company: string | null;
+          created_at: string;
+          full_name: string | null;
+          id: string;
+          is_active: boolean;
+          is_admin: boolean;
+          ojt_title: string | null;
+          required_ojt_hours: number | null;
+          required_workdays: number | null;
+          student_id: string | null;
+          updated_at: string;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "profiles";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
       };
       dtr_admin_update_trainee_profile: {
         Args: {
           expected_updated_at: string;
-          new_company: string | null;
-          new_full_name: string | null;
-          new_ojt_title: string | null;
+          new_company: string;
+          new_full_name: string;
+          new_ojt_title: string;
           new_required_ojt_hours: number | null;
-          new_student_id: string | null;
+          new_student_id: string;
           target_user_id: string;
         };
-        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+        Returns: {
+          account_type: Database["public"]["Enums"]["account_type"];
+          company: string | null;
+          created_at: string;
+          full_name: string | null;
+          id: string;
+          is_active: boolean;
+          is_admin: boolean;
+          ojt_title: string | null;
+          required_ojt_hours: number | null;
+          required_workdays: number | null;
+          student_id: string | null;
+          updated_at: string;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "profiles";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
       };
-      dtr_admin_set_account_active: {
-        Args: { target_active: boolean; target_user_id: string };
-        Returns: Database["public"]["Tables"]["profiles"]["Row"];
+      dtr_chief_approve: {
+        Args: {
+          actor_user_id: string;
+          credential: string;
+          new_password?: string;
+          request_id: string;
+        };
+        Returns: Json;
+      };
+      dtr_chief_prepare: {
+        Args: {
+          actor_user_id: string;
+          operation: string;
+          payload: Json;
+          request_id: string;
+        };
+        Returns: Json;
+      };
+      dtr_is_active: { Args: never; Returns: boolean };
+      dtr_is_admin: { Args: never; Returns: boolean };
+      dtr_punch: {
+        Args: {
+          action: string;
+          expected_break_in: string | null;
+          expected_break_out: string | null;
+          expected_check_in: string | null;
+          expected_check_out: string | null;
+          expected_date: string;
+          expected_id: string | null;
+          undo?: boolean;
+        };
+        Returns: {
+          break_in: string | null;
+          break_out: string | null;
+          check_in: string | null;
+          check_out: string | null;
+          created_at: string;
+          entry_date: string;
+          id: string;
+          updated_at: string;
+          user_id: string;
+        };
+        SetofOptions: {
+          from: "*";
+          to: "dtr_entries";
+          isOneToOne: true;
+          isSetofReturn: false;
+        };
       };
     };
     Enums: {

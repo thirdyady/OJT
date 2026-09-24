@@ -7,7 +7,7 @@
     "local:start": "npx --yes supabase start",
     "local:seed": "node scripts/seed-local.mjs",
     "local:dev": "node scripts/dev-local.mjs",
-    "test:local": "node --test tests/local-access.test.mjs tests/account-progress.test.mjs tests/progress-calculations.test.mjs tests/local-deletion.test.mjs tests/local-integrity.test.mjs tests/time-boundaries.test.mjs tests/provision-trainee.test.mjs",
+    "test:local": "node --test --test-concurrency=1 tests/local-access.test.mjs tests/account-progress.test.mjs tests/progress-calculations.test.mjs tests/local-deletion.test.mjs tests/local-integrity.test.mjs tests/time-boundaries.test.mjs tests/provision-trainee.test.mjs tests/local-chief-approval.test.mjs",
     "test:progress": "node --test tests/progress-calculations.test.mjs tests/account-progress.test.mjs",
     "test:account-types": "node --test tests/local-account-types.test.mjs",
     "test:provisioning": "node --test tests/provision-trainee.test.mjs tests/local-provisioning.test.mjs",
@@ -23,7 +23,8 @@
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "chief:setup": "node scripts/chief-setup.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",

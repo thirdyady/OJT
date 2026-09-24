@@ -47,7 +47,7 @@ export function accountProgress(profile, records) {
         ? profile.required_workdays
         : null;
   const target = Number.isFinite(value) && value > 0 ? value : null;
-  const credited = unit === "days" ? days : hours;
+  const credited = unit === "days" ? days : unit === "hours" ? hours : null;
   return {
     hours,
     days,

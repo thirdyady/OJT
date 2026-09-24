@@ -16,7 +16,7 @@ export function accountProgress(
   days: number;
   unit: "hours" | "days" | null;
   target: number | null;
-  credited: number;
+  credited: number | null;
   percentage: number | null;
   remaining: number | null;
 };

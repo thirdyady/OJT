@@ -66,7 +66,7 @@ export function AccountProgressSummary({
         ],
         [
           ojt ? "Credited hours" : "Completed valid workdays",
-          `${progress.credited.toFixed(ojt ? 2 : 0)} ${ojt ? "hrs" : "days"}`,
+          `${progress.credited?.toFixed(ojt ? 2 : 0)} ${ojt ? "hrs" : "days"}`,
         ],
         [
           "Remaining",
