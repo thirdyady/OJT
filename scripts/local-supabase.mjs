@@ -31,6 +31,7 @@ export function localSupabase() {
   const options = { auth: { persistSession: false, autoRefreshToken: false } };
   return {
     databaseUrl: status.DB_URL,
+    mailpitUrl: status.INBUCKET_URL,
     url: status.API_URL,
     publicKey: status.ANON_KEY || status.PUBLISHABLE_KEY,
     serviceRoleKey: status.SERVICE_ROLE_KEY || status.SECRET_KEY,

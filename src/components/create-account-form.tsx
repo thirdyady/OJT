@@ -150,7 +150,7 @@ export function CreateAccountForm({
             <option value="regular_employee">Regular Employee</option>
           </select>
         </label>
-        {field("fullName", "Full Name", { aria: "New trainee full name", maxLength: 200 })}
+        {field("fullName", "Full Name", { aria: "New account full name", maxLength: 200 })}
         {isOjt &&
           field("studentId", "Student ID", { aria: "New trainee student ID", maxLength: 100 })}
         {field("company", isOjt ? "Host Company" : "Office / Department", {
@@ -161,15 +161,15 @@ export function CreateAccountForm({
           aria: isOjt ? "New trainee OJT title" : "New account position",
           maxLength: 200,
         })}
-        {field("email", "Email", { type: "email", aria: "New trainee email", maxLength: 254 })}
+        {field("email", "Email", { type: "email", aria: "New account email", maxLength: 254 })}
         {field("password", "Temporary password", {
           type: "password",
-          aria: "New trainee temporary password",
+          aria: "New account temporary password",
           maxLength: 72,
         })}
         {field("confirm", "Confirm password", {
           type: "password",
-          aria: "Confirm new trainee password",
+          aria: "Confirm new account password",
           maxLength: 72,
         })}
         {isOjt &&

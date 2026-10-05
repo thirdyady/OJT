@@ -1,10 +1,10 @@
 import { createFileRoute, Link, useLocation } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  clearPasswordRecoveryEvent,
   getPasswordRecoverySession,
   supabase,
   updateRecoveryPassword,
+  signOutRecoverySession,
 } from "@/integrations/supabase/client";
 
 export const Route = createFileRoute("/reset-password")({ component: ResetPasswordPage });
@@ -23,7 +23,7 @@ function getAuthLinkDetails(hashValue: string, searchValue: string): AuthLinkDet
   const errorDescription = hash.get("error_description") || search.get("error_description");
   const errorCode = hash.get("error_code") || search.get("error_code");
   const errorType = hash.get("error") || search.get("error");
-  const linkError = errorDescription || (errorCode || errorType ? INVALID_RECOVERY_MESSAGE : "");
+  const linkError = errorDescription || errorCode || errorType ? INVALID_RECOVERY_MESSAGE : "";
   const flowType = hash.get("type") || search.get("type");
   const hasRecoveryToken = hash.has("access_token") || search.has("access_token");
   const recoveryIntent =
@@ -46,18 +46,19 @@ function ResetPasswordPage() {
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
   const [error, setError] = useState("");
   const [flow, setFlow] = useState<"recovery" | "change" | null>(null);
   const saving = useRef(false);
   const recoveryEventReceived = useRef(false);
   const recoverySession = useRef<string | null>(null);
+  const completedRecoverySession = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
     let recoveryFallback: ReturnType<typeof setTimeout> | undefined;
     recoveryEventReceived.current = false;
     recoverySession.current = null;
-    if (!recoveryIntent) clearPasswordRecoveryEvent();
     setChecking(true);
     setReady(false);
     setDone(false);
@@ -67,9 +68,9 @@ function ResetPasswordPage() {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
+      if (!active || completedRecoverySession.current) return;
 
-      if (event === "PASSWORD_RECOVERY") {
+      if (event === "PASSWORD_RECOVERY" || getPasswordRecoverySession(session)) {
         recoverySession.current = getPasswordRecoverySession(session);
         recoveryEventReceived.current = true;
         setFlow("recovery");
@@ -116,7 +117,7 @@ function ResetPasswordPage() {
     supabase.auth
       .getSession()
       .then(({ data, error: sessionError }) => {
-        if (!active) return;
+        if (!active || completedRecoverySession.current) return;
 
         if (linkError) {
           setReady(false);
@@ -133,7 +134,7 @@ function ResetPasswordPage() {
           return;
         }
 
-        if (!recoveryIntent && data.session) {
+        if (!recoveryIntent && data.session && !getPasswordRecoverySession(data.session)) {
           setFlow("change");
           setReady(true);
           setError("");
@@ -141,7 +142,7 @@ function ResetPasswordPage() {
           return;
         }
 
-        if (!recoveryIntent) {
+        if (!recoveryIntent && !getPasswordRecoverySession(data.session)) {
           setReady(false);
           setError("Sign in before changing your password.");
           setChecking(false);
@@ -195,6 +196,24 @@ function ResetPasswordPage() {
     };
   }, [linkError, recoveryIntent]);
 
+  const finishRecovery = async () => {
+    setBusy(true);
+    try {
+      if (completedRecoverySession.current)
+        await signOutRecoverySession(completedRecoverySession.current);
+      setLogoutPending(false);
+      setDone(true);
+      setError("");
+    } catch {
+      setLogoutPending(true);
+      setError(
+        "Your password was updated, but sign-out could not be completed. Check your connection and finish signing out before signing in with your new password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (saving.current || !ready) return;
@@ -217,21 +236,19 @@ function ResetPasswordPage() {
         setReady(false);
         throw new Error(INVALID_RECOVERY_MESSAGE);
       }
+      const updatingRecoverySession = recoverySession.current;
       const { error: updateError } =
         flow === "recovery"
           ? await updateRecoveryPassword(data.session!, password)
           : await supabase.auth.updateUser({ password });
       if (updateError) throw updateError;
       if (flow === "recovery") {
-        // Require an explicit sign-in after a recovery update instead of
-        // silently leaving the one-time recovery session active.
-        const current = await supabase.auth.getSession();
-        if (
-          getPasswordRecoverySession(current.data.session) === recoverySession.current &&
-          recoverySession.current
-        )
-          await supabase.auth.signOut();
-        clearPasswordRecoveryEvent();
+        setReady(false);
+        setPassword("");
+        setConfirm("");
+        completedRecoverySession.current = updatingRecoverySession;
+        await finishRecovery();
+        return;
       }
       setDone(true);
       setReady(false);
@@ -240,6 +257,9 @@ function ResetPasswordPage() {
     } catch (updateError) {
       const message = updateError instanceof Error ? updateError.message : "";
       const sessionFailure = /session|token|jwt|expired|invalid/i.test(message);
+      if (flow === "recovery" && sessionFailure) {
+        setReady(false);
+      }
       setError(
         flow === "recovery" && sessionFailure
           ? INVALID_RECOVERY_MESSAGE
@@ -257,6 +277,19 @@ function ResetPasswordPage() {
         <h1 className="text-xl font-semibold">Set a new password</h1>
         {checking ? (
           <p role="status">Checking your link…</p>
+        ) : logoutPending ? (
+          <>
+            <p role="alert" className="text-sm text-red-700">
+              {error}
+            </p>
+            <button
+              className="w-full rounded bg-slate-900 p-2 text-white disabled:opacity-50"
+              disabled={busy}
+              onClick={finishRecovery}
+            >
+              {busy ? "Signing out..." : "Finish signing out"}
+            </button>
+          </>
         ) : done ? (
           <>
             <p role="status" className="text-emerald-700">
@@ -283,7 +316,7 @@ function ResetPasswordPage() {
                     className="mt-1 w-full rounded border p-2"
                     type="password"
                     autoComplete="new-password"
-                    minLength={6}
+                    minLength={8}
                     required
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -296,7 +329,7 @@ function ResetPasswordPage() {
                     className="mt-1 w-full rounded border p-2"
                     type="password"
                     autoComplete="new-password"
-                    minLength={6}
+                    minLength={8}
                     required
                     value={confirm}
                     onChange={(e) => setConfirm(e.target.value)}

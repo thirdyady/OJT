@@ -48,3 +48,17 @@ export async function loadProfiles(accountType?: Enums<"account_type">) {
   });
   return rows.sort((a, b) => (a.full_name ?? "").localeCompare(b.full_name ?? ""));
 }
+
+export async function loadReportDtrRows(from: string, to: string) {
+  return allPages((after) => {
+    let query = supabase
+      .from("dtr_entries")
+      .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
+      .gte("entry_date", from)
+      .lte("entry_date", to)
+      .order("id")
+      .limit(500);
+    if (after) query = query.gt("id", after);
+    return query;
+  });
+}

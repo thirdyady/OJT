@@ -1,5 +1,6 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
+import { CheckCircle2, KeyRound, RotateCcw, ShieldCheck } from "lucide-react";
 import { prepareChiefAction, approveChiefAction } from "@/lib/chief-approval.functions";
 import type { ChiefRequest, ChiefResponse, PunchValues } from "@/lib/chief-input";
 import {
@@ -362,38 +363,91 @@ export function ChiefSettings() {
   const [message, setMessage] = useState("");
   const [recoveryCode, setRecoveryCode] = useState("");
   return (
-    <section className="rounded border p-4">
-      <h3>Chief Approval Password</h3>
-      <p className="text-sm">
-        The Chief enters the current password to change it. Recovery requires the separate custodian
-        code.
-      </p>
-      <div className="mt-2 flex gap-2">
+    <section
+      aria-label="Chief approval settings"
+      className="min-w-0 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+    >
+      <header className="flex items-start gap-3 border-b border-slate-200 px-4 py-5 sm:gap-4 sm:px-6">
+        <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-blue-950 text-white">
+          <ShieldCheck className="size-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <h2
+            id="chief-settings-title"
+            className="text-lg font-semibold tracking-tight text-slate-950"
+          >
+            Chief Approval Password
+          </h2>
+          <p className="mt-1 text-sm leading-relaxed text-slate-600">
+            Used for Chief-approved DTR corrections and unused-account deletion.
+          </p>
+        </div>
+      </header>
+      <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-6">
         {(
           [
-            ["change_ssp", "Change Password"],
-            ["recover_ssp", "Forgot Approval Password"],
+            [
+              "change_ssp",
+              "Change Password",
+              "Update the approval password",
+              "The Chief enters the current approval password and chooses a new one.",
+              KeyRound,
+            ],
+            [
+              "recover_ssp",
+              "Forgot Approval Password",
+              "Recover approval access",
+              "Ask the Chief or authorized custodian for the separate recovery code.",
+              RotateCcw,
+            ],
           ] as const
-        ).map(([operation, label]) => (
-          <button
-            className={buttonClass}
+        ).map(([operation, label, title, description, Icon]) => (
+          <div
             key={operation}
-            onClick={() => {
-              setRecoveryCode("");
-              setMessage("");
-              setRequest({ requestId: crypto.randomUUID(), operation, payload: {} });
-            }}
+            className="flex min-w-0 flex-col rounded-xl border border-slate-200 bg-slate-50/60 p-4 sm:p-5"
           >
-            {label}
-          </button>
+            <div className="mb-2 flex items-center gap-2 text-slate-800">
+              <Icon className="size-4 shrink-0 text-slate-500" aria-hidden="true" />
+              <h3 className="text-sm font-semibold">{title}</h3>
+            </div>
+            <p className="mb-4 flex-1 text-sm leading-relaxed text-slate-600">{description}</p>
+            <button
+              className="inline-flex min-h-11 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-blue-300 hover:bg-blue-50 hover:text-blue-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 sm:self-start"
+              onClick={() => {
+                setRecoveryCode("");
+                setMessage("");
+                setRequest({ requestId: crypto.randomUUID(), operation, payload: {} });
+              }}
+            >
+              {label}
+            </button>
+          </div>
         ))}
       </div>
-      {message && <p role="status">{message}</p>}
+      {message && (
+        <p
+          role="status"
+          className="mx-4 mb-4 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm leading-relaxed text-emerald-900 sm:mx-6 sm:mb-6"
+        >
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          {message}
+        </p>
+      )}
       {recoveryCode && (
-        <div role="status">
-          <p>Store this new recovery code securely. It is shown only once:</p>
-          <code>{recoveryCode}</code>
-          <button className={buttonClass} onClick={() => setRecoveryCode("")}>
+        <div
+          role="status"
+          className="mx-4 mb-4 space-y-3 rounded-xl border border-amber-300 bg-amber-50 p-4 sm:mx-6 sm:mb-6 sm:p-5"
+        >
+          <p className="text-sm font-semibold text-amber-950">
+            Store this new recovery code securely. It is shown only once:
+          </p>
+          <code className="block select-all break-all rounded-lg border border-amber-200 bg-white p-3 text-sm leading-relaxed text-slate-900">
+            {recoveryCode}
+          </code>
+          <button
+            className="min-h-11 w-full rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 sm:w-auto"
+            onClick={() => setRecoveryCode("")}
+          >
             I have stored the code
           </button>
         </div>

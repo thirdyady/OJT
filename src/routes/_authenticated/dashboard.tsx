@@ -1,3 +1,5 @@
+import { AdminReports } from "@/components/admin-reports";
+import { roleReportText } from "@/lib/attendance-reports.mjs";
 import {
   ChiefApproval,
   ChiefSettings,
@@ -48,10 +50,6 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 type Punch = "check_in" | "break_out" | "break_in" | "check_out";
 
-function punchValue(field: Punch, value: string | null): Partial<Record<Punch, string | null>> {
-  return { [field]: value };
-}
-
 type DtrRow = {
   id?: string;
   user_id?: string;
@@ -66,6 +64,8 @@ type DtrReportProfile = {
   fullName: string;
   ojtTitle: string | null;
   accountType: Enums<"account_type">;
+  requiredOjtHours: number | null;
+  requiredWorkdays: number | null;
 };
 
 type Profile = {
@@ -284,6 +284,16 @@ function buildDtrHtmlFor(
   const fullName = profile.fullName;
   const ojtTitle = profile.ojtTitle?.trim() || "Not provided";
   const visibleRows = filterRowsByMonth(rows, targetMonth, targetYear);
+  const reportSummary = escapeHtml(
+    roleReportText(
+      {
+        account_type: profile.accountType,
+        required_ojt_hours: profile.requiredOjtHours,
+        required_workdays: profile.requiredWorkdays,
+      },
+      visibleRows,
+    ),
+  );
   const byDay: Record<number, DtrRow> = {};
   for (const r of visibleRows) {
     const day = Number(r.entry_date.slice(-2));
@@ -341,7 +351,7 @@ function buildDtrHtmlFor(
         </thead>
         <tbody>${rows31.join("")}</tbody>
       </table>
-      <div class="total-line">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong></div>
+      <div class="total-line">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong>${reportSummary ? `<br/>${reportSummary}` : ""}</div>
       <div class="cert">
         I CERTIFY on my honor that above is a true and correct<br/>
         report of the hours of work performed, record of which was made<br/>
@@ -436,6 +446,16 @@ function downloadWordDtrFor(
   const fullName = profile.fullName;
   const ojtTitle = profile.ojtTitle?.trim() || "Not provided";
   const visibleRows = filterRowsByMonth(rows, targetMonth, targetYear);
+  const reportSummary = escapeHtml(
+    roleReportText(
+      {
+        account_type: profile.accountType,
+        required_ojt_hours: profile.requiredOjtHours,
+        required_workdays: profile.requiredWorkdays,
+      },
+      visibleRows,
+    ),
+  );
   const monthLabel = `${MONTHS[targetMonth]} ${targetYear}`;
 
   const byDay: Record<number, DtrRow> = {};
@@ -566,7 +586,7 @@ ${rows31}
     border:none;
     padding:4px 0 0;
     font-family:Arial,sans-serif;
-  ">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong></td>
+  ">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong>${reportSummary ? `<br/>${reportSummary}` : ""}</td>
 </tr>
 <tr>
   <td colspan="5" style="
@@ -675,7 +695,7 @@ ${rows31}
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `DTR-${MONTHS[targetMonth]}-${targetYear}-${fullName.replace(/\s+/g, "_") || "trainee"}.doc`;
+  a.download = `DTR-${MONTHS[targetMonth]}-${targetYear}-${fullName.replace(/\s+/g, "_") || "account"}.doc`;
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -998,6 +1018,8 @@ function DashboardPage() {
         fullName: profile.full_name || "",
         ojtTitle: profile.ojt_title,
         accountType: profile.account_type,
+        requiredOjtHours: profile.required_ojt_hours,
+        requiredWorkdays: profile.required_workdays,
       },
       rows,
       downloadMonth,
@@ -1012,6 +1034,8 @@ function DashboardPage() {
         fullName: profile.full_name || "",
         ojtTitle: profile.ojt_title,
         accountType: profile.account_type,
+        requiredOjtHours: profile.required_ojt_hours,
+        requiredWorkdays: profile.required_workdays,
       },
       rows,
       downloadMonth,
@@ -1837,6 +1861,8 @@ function AdminDashboard() {
         fullName: selectedTrainee.full_name || "",
         ojtTitle: selectedTrainee.ojt_title,
         accountType: selectedTrainee.account_type,
+        requiredOjtHours: selectedTrainee.required_ojt_hours,
+        requiredWorkdays: selectedTrainee.required_workdays,
       },
       entries,
       docMonth,
@@ -1851,6 +1877,8 @@ function AdminDashboard() {
         fullName: selectedTrainee.full_name || "",
         ojtTitle: selectedTrainee.ojt_title,
         accountType: selectedTrainee.account_type,
+        requiredOjtHours: selectedTrainee.required_ojt_hours,
+        requiredWorkdays: selectedTrainee.required_workdays,
       },
       entries,
       docMonth,
@@ -1930,6 +1958,11 @@ function AdminDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <AdminReports
+        profiles={trainees}
+        profilesLoading={loadingTrainees}
+        profilesError={traineeError}
+      />
       <ChiefSettings />
       {editor && (
         <DtrEditor
@@ -1991,8 +2024,7 @@ function AdminDashboard() {
           />
           {traineeError && (
             <p className="mb-2 text-xs text-red-600">
-              Couldn't load accounts: {traineeError}. Check your RLS policy allows admins to select
-              all profiles.
+              Couldn't load accounts. Reload the page to try again.
             </p>
           )}
           {loadingTrainees ? (
@@ -2337,8 +2369,7 @@ function AdminDashboard() {
             </p>
           ) : entriesError ? (
             <p className="px-5 py-10 text-center text-sm text-red-600">
-              Couldn't load entries: {entriesError}. Check your RLS policy allows admins to select
-              all dtr_entries.
+              Couldn't load attendance records. Reload the page to try again.
             </p>
           ) : loadingEntries ? (
             <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>

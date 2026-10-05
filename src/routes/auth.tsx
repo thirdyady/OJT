@@ -1,16 +1,23 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useEffect, useRef, useState } from "react";
+import {
+  RECOVERY_REQUEST_MESSAGE,
+  recoveryWaitSeconds,
+  startRecoveryCooldown,
+} from "@/lib/password-recovery";
+import { accountLabels } from "@/lib/account-progress.mjs";
+import type { Enums } from "@/integrations/supabase/types";
+import { supabase, getPasswordRecoverySession } from "@/integrations/supabase/client";
 import { getEmailConfirmationRedirectUrl, getPasswordRecoveryRedirectUrl } from "@/lib/auth-urls";
-import psaImage from "../../assets/psa.jpg";
+import { useRecoveryRedirect } from "@/hooks/use-recovery-redirect";
 
 export const Route = createFileRoute("/auth")({
   head: () => ({
     meta: [
-      { title: "Sign in · OJT DTR" },
+      { title: "Sign in · PSA DTR" },
       {
         name: "description",
-        content: "Create an account or sign in to track your OJT DTR.",
+        content: "Sign in to review and record your attendance.",
       },
     ],
   }),
@@ -18,6 +25,7 @@ export const Route = createFileRoute("/auth")({
 });
 
 function AuthPage() {
+  useRecoveryRedirect();
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
@@ -26,32 +34,70 @@ function AuthPage() {
   const [studentId, setStudentId] = useState("");
   const [company, setCompany] = useState("");
   const [ojtTitle, setOjtTitle] = useState("");
+  const [accountType, setAccountType] = useState<Enums<"account_type">>("ojt");
+  const [requiredDays, setRequiredDays] = useState("");
+  const submitting = useRef(false);
+  const [recoveryWait, setRecoveryWait] = useState(0);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ kind: "error" | "info"; text: string } | null>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate({ to: "/dashboard" });
+      if (getPasswordRecoverySession(data.session))
+        navigate({ to: "/reset-password", search: { flow: "recovery" } });
+      else if (data.session) navigate({ to: "/dashboard" });
     });
   }, [navigate]);
 
+  useEffect(() => {
+    if (mode !== "forgot") return;
+    const update = () => setRecoveryWait(recoveryWaitSeconds());
+    update();
+    const timer = window.setInterval(update, 1000);
+    window.addEventListener("storage", update);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("storage", update);
+    };
+  }, [mode]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitting.current) return;
+    if (mode === "forgot" && recoveryWaitSeconds() > 0) {
+      setRecoveryWait(recoveryWaitSeconds());
+      return;
+    }
+    submitting.current = true;
     setLoading(true);
     setMsg(null);
     try {
       if (mode === "forgot") {
-        const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-          redirectTo: getPasswordRecoveryRedirectUrl(),
-        });
-        if (error) throw error;
-        setMsg({
-          kind: "info",
-          text: "If an account exists for this email, a password reset link has been sent. Check your inbox.",
-        });
+        startRecoveryCooldown();
+        setRecoveryWait(recoveryWaitSeconds());
+        // Do not disclose account-specific Auth/SMTP failures or throttling.
+        // The same response and cooldown apply to every valid email address.
+        try {
+          await supabase.auth.resetPasswordForEmail(email.trim(), {
+            redirectTo: getPasswordRecoveryRedirectUrl(),
+          });
+        } catch {
+          /* Delivery is deliberately not claimed or confirmed here. */
+        }
+        setMsg({ kind: "info", text: RECOVERY_REQUEST_MESSAGE });
       } else if (mode === "signup") {
-        if (![fullName, studentId, company, ojtTitle].every((value) => value.trim())) {
-          throw new Error("Complete all required trainee details. Spaces alone are not valid.");
+        if (
+          ![fullName, company, ojtTitle, ...(accountType === "ojt" ? [studentId] : [])].every(
+            (value) => value.trim(),
+          )
+        ) {
+          throw new Error("Complete all required account details. Spaces alone are not valid.");
+        }
+        if (
+          accountType === "processing" &&
+          (!/^[1-9][0-9]*$/.test(requiredDays) || Number(requiredDays) > 2147483647)
+        ) {
+          throw new Error("Required workdays must be a positive whole number.");
         }
         const { error } = await supabase.auth.signUp({
           email: email.trim(),
@@ -60,7 +106,9 @@ function AuthPage() {
             emailRedirectTo: getEmailConfirmationRedirectUrl(),
             data: {
               full_name: fullName.trim(),
-              student_id: studentId.trim(),
+              student_id: accountType === "ojt" ? studentId.trim() : null,
+              account_type: accountType,
+              required_workdays: accountType === "processing" ? Number(requiredDays) : null,
               company: company.trim(),
               ojt_title: ojtTitle.trim(),
             },
@@ -86,37 +134,35 @@ function AuthPage() {
         text: err instanceof Error ? err.message : "Something went wrong",
       });
     } finally {
+      submitting.current = false;
       setLoading(false);
     }
   };
 
   return (
-    <div className="flex min-h-screen bg-slate-50">
-      {/* Left: PSA image panel (hidden on small screens) */}
-      <div className="relative hidden w-1/2 items-center justify-center bg-slate-900 lg:flex">
-        <img src={psaImage} alt="PSA" className="h-full w-full object-cover" />
-      </div>
-
-      {/* Right: Sign in / Sign up form */}
-      <div className="flex w-full items-center justify-center px-4 py-12 lg:w-1/2">
-        <div className="w-full max-w-md">
+    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-10">
+      <div className="w-full max-w-md">
+        <div>
           <div className="mb-6 text-center">
-            <Link to="/" className="text-xs font-medium uppercase tracking-widest text-slate-500">
-              OJT DTR
+            <Link
+              to="/"
+              className="rounded text-sm font-medium text-blue-900 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-900"
+            >
+              Back to home
             </Link>
             <h1 className="mt-2 text-2xl font-semibold text-slate-900">
               {mode === "forgot"
                 ? "Reset your password"
                 : mode === "signin"
                   ? "Sign in to your DTR"
-                  : "Create your trainee account"}
+                  : "Create your account"}
             </h1>
             <p className="mt-1 text-sm text-slate-500">
               {mode === "forgot"
                 ? "Enter your registered email to request a reset link."
                 : mode === "signin"
-                  ? "Track your daily time record securely."
-                  : "Start logging your OJT attendance in seconds."}
+                  ? "Enter your email and password to continue."
+                  : "Select your account type and complete your details below."}
             </p>
           </div>
 
@@ -126,6 +172,23 @@ function AuthPage() {
           >
             {mode === "signup" && (
               <>
+                <Field label="Account type">
+                  <select
+                    className="input"
+                    disabled={loading}
+                    value={accountType}
+                    onChange={(e) => {
+                      setAccountType(e.target.value as Enums<"account_type">);
+                      setMsg(null);
+                    }}
+                  >
+                    {Object.entries(accountLabels).map(([value, label]) => (
+                      <option key={value} value={value}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
                 <Field label="Full name">
                   <input
                     required
@@ -135,33 +198,50 @@ function AuthPage() {
                     className="input"
                   />
                 </Field>
-                <Field label="Student ID">
-                  <input
-                    required
-                    value={studentId}
-                    onChange={(e) => setStudentId(e.target.value)}
-                    placeholder="2024-00001"
-                    className="input"
-                  />
-                </Field>
-                <Field label="Host company">
+                {accountType === "ojt" && (
+                  <Field label="Student ID">
+                    <input
+                      required
+                      value={studentId}
+                      onChange={(e) => setStudentId(e.target.value)}
+                      placeholder="2024-00001"
+                      className="input"
+                    />
+                  </Field>
+                )}
+                <Field label={accountType === "ojt" ? "Host company" : "Office / Department"}>
                   <input
                     required
                     value={company}
                     onChange={(e) => setCompany(e.target.value)}
-                    placeholder="Acme Corp."
+                    placeholder="Philippine Statistics Authority"
                     className="input"
                   />
                 </Field>
-                <Field label="OJT title">
+                <Field label="Position / Role">
                   <input
                     required
                     value={ojtTitle}
                     onChange={(e) => setOjtTitle(e.target.value)}
-                    placeholder="Data Analyst Intern"
+                    placeholder="(Administrative Officer IV, Intern, Etc..)"
                     className="input"
                   />
                 </Field>
+                {accountType === "processing" && (
+                  <Field label="Required workdays">
+                    <input
+                      className="input"
+                      type="number"
+                      required
+                      min="1"
+                      max="2147483647"
+                      step="1"
+                      value={requiredDays}
+                      onChange={(e) => setRequiredDays(e.target.value)}
+                      placeholder="e.g. 90"
+                    />
+                  </Field>
+                )}
               </>
             )}
             <Field label="Email">
@@ -171,7 +251,7 @@ function AuthPage() {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@school.edu"
+                placeholder="you@example.com"
                 className="input"
               />
             </Field>
@@ -180,7 +260,7 @@ function AuthPage() {
                 <input
                   type="password"
                   required
-                  minLength={6}
+                  minLength={mode === "signup" ? 8 : undefined}
                   autoComplete={mode === "signin" ? "current-password" : "new-password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -204,8 +284,8 @@ function AuthPage() {
 
             <button
               type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              disabled={loading || (mode === "forgot" && recoveryWait > 0)}
+              className="w-full rounded-md bg-blue-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-900 disabled:opacity-60"
             >
               {loading
                 ? "Please wait…"
@@ -216,6 +296,12 @@ function AuthPage() {
                     : "Create account"}
             </button>
 
+            {mode === "forgot" && recoveryWait > 0 && (
+              <p className="text-sm text-slate-600">
+                Please wait {recoveryWait} seconds before requesting another reset link. Requests
+                are limited to help prevent email abuse.
+              </p>
+            )}
             <div className="text-center text-sm text-slate-500">
               {mode === "signin" ? (
                 <>
@@ -274,9 +360,9 @@ function AuthPage() {
           color: rgb(15 23 42);
           outline: none;
         }
-        .input:focus { border-color: rgb(100 116 139); }
+        .input:focus { border-color: rgb(30 58 138); outline: 2px solid rgb(30 58 138); outline-offset: 2px; }
       `}</style>
-    </div>
+    </main>
   );
 }
 
