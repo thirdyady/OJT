@@ -40,6 +40,14 @@ test("Chief can rotate the password; invalid current password clears all fields;
   page,
 }) => {
   const next = `NewChief!${randomUUID()}`;
+  const settings = page.getByRole("region", { name: "Chief approval settings", exact: true });
+  await settings.screenshot({ path: test.info().outputPath("chief-settings-desktop.png") });
+  await page.setViewportSize({ width: 375, height: 812 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await settings.screenshot({ path: test.info().outputPath("chief-settings-mobile.png") });
+  await page.setViewportSize({ width: 1280, height: 900 });
   await page.getByRole("button", { name: "Change Password", exact: true }).click();
   const current = page.getByLabel("Chief Approval Password", { exact: true });
   await current.fill("incorrect");

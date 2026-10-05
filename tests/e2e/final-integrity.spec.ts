@@ -182,7 +182,7 @@ test("whitespace-only required signup fields are rejected before contacting Auth
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
   await page.getByRole("button", { name: "Sign up", exact: true }).click();
-  for (const label of ["Full name", "Student ID", "Host company", "OJT title"])
+  for (const label of ["Full name", "Student ID", "Host company", "Position / Role"])
     await page.getByLabel(label, { exact: true }).fill("   ");
   await page.getByLabel("Email", { exact: true }).fill(`${randomUUID()}@ojt.local.test`);
   await page.getByLabel("Password", { exact: true }).fill(password);

@@ -67,9 +67,13 @@ test.afterAll(async () => {
   if (createdUserId) checked(await local.admin.auth.admin.deleteUser(createdUserId));
 });
 
-test("the root URL redirects signed-out visitors to sign in", async ({ page }) => {
+test("the PSA landing page links to sign in", async ({ page }) => {
   await page.goto("/");
   await waitForHydration(page);
+  await expect(
+    page.getByRole("heading", { name: "Your workday, recorded clearly." }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/auth$/);
   await expect(page.getByRole("heading", { name: "Sign in to your DTR" })).toBeVisible();
 });
@@ -189,15 +193,15 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
     .locator("[data-admin-create-account-endpoint]")
     .getAttribute("data-admin-create-account-endpoint");
   expect(endpoint).toBeTruthy();
-  await page.getByLabel("New trainee full name", { exact: true }).fill("Server Created Trainee");
+  await page.getByLabel("New account full name", { exact: true }).fill("Server Created Trainee");
   await page.getByLabel("New trainee student ID", { exact: true }).fill(createdStudentId);
   await page
     .getByLabel("New trainee host company", { exact: true })
     .fill("PSA (server account test)");
   await page.getByLabel("New trainee OJT title", { exact: true }).fill("Systems Intern");
-  await page.getByLabel("New trainee email", { exact: true }).fill(createdEmail);
-  await page.getByLabel("New trainee temporary password", { exact: true }).fill(createdPassword);
-  await page.getByLabel("Confirm new trainee password", { exact: true }).fill(createdPassword);
+  await page.getByLabel("New account email", { exact: true }).fill(createdEmail);
+  await page.getByLabel("New account temporary password", { exact: true }).fill(createdPassword);
+  await page.getByLabel("Confirm new account password", { exact: true }).fill(createdPassword);
   await page.getByLabel("New trainee required OJT hours", { exact: true }).fill("486");
   await page.getByRole("button", { name: "Create account", exact: true }).click();
   await expect(page.getByRole("status")).toContainText("Account created");
@@ -385,7 +389,7 @@ test("forgot password requests a recovery email; recovery updates the password; 
   checked(await local.admin.auth.admin.updateUserById(userId, { password }));
   await page.goto("/reset-password#error=access_denied&error_description=Link+expired");
   await waitForHydration(page);
-  await expect(page.getByRole("alert")).toContainText("Link expired");
+  await expect(page.getByRole("alert")).toContainText("invalid or expired");
   await expect(page.getByRole("button", { name: "Update password" })).toHaveCount(0);
 });
 
@@ -431,7 +435,7 @@ test("signed-in change password keeps the session and rejects an invalid recover
 
     await page.goto("/reset-password#error=access_denied&error_description=Link+expired");
     await waitForHydration(page);
-    await expect(page.getByRole("alert")).toContainText("Link expired");
+    await expect(page.getByRole("alert")).toContainText("invalid or expired");
     await expect(page.getByRole("button", { name: "Update password", exact: true })).toHaveCount(0);
     await page.goto("/reset-password?flow=recovery");
     await waitForHydration(page);
@@ -526,13 +530,13 @@ test("new trainee registration requires complete profile details", async ({ page
     await page.goto("/auth");
     await waitForHydration(page);
     await page.getByRole("button", { name: "Sign up", exact: true }).click();
-    for (const label of ["Full name", "Student ID", "Host company", "OJT title"]) {
+    for (const label of ["Full name", "Student ID", "Host company", "Position / Role"]) {
       await expect(page.getByLabel(label, { exact: true })).toHaveAttribute("required", "");
     }
     await page.getByLabel("Full name", { exact: true }).fill("Browser Signup Trainee");
     await page.getByLabel("Student ID", { exact: true }).fill("BROWSER-SIGNUP");
     await page.getByLabel("Host company", { exact: true }).fill("PSA (browser signup)");
-    await page.getByLabel("OJT title", { exact: true }).fill("Statistics Intern");
+    await page.getByLabel("Position / Role", { exact: true }).fill("Statistics Intern");
     await page.getByLabel("Email", { exact: true }).fill(signupEmail);
     await page.getByLabel("Password", { exact: true }).fill(`Signup!${randomUUID()}`);
     await page.getByRole("button", { name: "Create account", exact: true }).click();

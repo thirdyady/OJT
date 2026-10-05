@@ -41,7 +41,7 @@ BEGIN
   IF caller_active IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'This account cannot record attendance' USING ERRCODE = '42501';
   END IF;
-  server_now := clock_timestamp(); asia manila 
+  server_now := clock_timestamp();
   today := (server_now AT TIME ZONE 'Asia/Manila')::date;
   IF expected_date IS DISTINCT FROM today THEN
     RAISE EXCEPTION 'The attendance date changed. Reload records before trying again' USING ERRCODE = '40001';

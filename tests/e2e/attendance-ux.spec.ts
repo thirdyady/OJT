@@ -186,8 +186,10 @@ test("an admin-cleared punch is reported as stale and can be refreshed safely", 
     await local.admin.from("dtr_entries").insert({
       user_id: trainee.id,
       entry_date: date,
-      check_in: `${date}T08:00:00+08:00`,
-      break_out: `${date}T12:00:00+08:00`,
+      // Chief corrections reject future times. Keep this fixture valid even
+      // when the suite runs before 08:00 in Manila.
+      check_in: `${date}T00:00:00+08:00`,
+      break_out: new Date().toISOString(),
     }),
   );
   await page.reload();

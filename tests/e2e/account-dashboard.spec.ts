@@ -102,6 +102,10 @@ for (const type of types)
       `${type === "ojt" ? "OJT Title" : "Position"}: <strong>Analyst</strong>`,
     );
     if (type !== "ojt") expect(word).not.toContain("OJT Title");
+    if (type === "ojt") expect(word).toContain("Required hours: 16");
+    else if (type === "processing") expect(word).toContain("Required days: 4");
+    else
+      expect(word).not.toMatch(/Required hours|Required days|Completed valid workdays|progress/i);
     const client = local.client();
     checked(await client.auth.signInWithPassword({ email: user.email, password }));
     try {

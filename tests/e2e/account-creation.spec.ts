@@ -49,10 +49,10 @@ async function prepare(page: Page, type = "ojt") {
   await form.getByLabel("New account type").selectOption(type);
   const email = `${randomUUID()}@ojt.local.test`;
   emails.push(email);
-  await form.getByLabel("New trainee full name").fill("Created employee");
-  await form.getByLabel("New trainee email").fill(email);
-  await form.getByLabel("New trainee temporary password", { exact: true }).fill(password);
-  await form.getByLabel("Confirm new trainee password").fill(password);
+  await form.getByLabel("New account full name").fill("Created employee");
+  await form.getByLabel("New account email").fill(email);
+  await form.getByLabel("New account temporary password", { exact: true }).fill(password);
+  await form.getByLabel("Confirm new account password").fill(password);
   await form
     .getByLabel(type === "ojt" ? "New trainee host company" : "New account office")
     .fill("PSA");
@@ -110,17 +110,17 @@ test("invalid email and missing fields send no request or allocate an identifier
   page.on("request", (r) => {
     if (r.method() === "POST" && r.url().includes(endpoint)) requests++;
   });
-  await form.getByLabel("New trainee email").fill("invalid-email");
+  await form.getByLabel("New account email").fill("invalid-email");
   await form.getByRole("button", { name: "Create account", exact: true }).click();
   await expect(form.getByRole("alert")).toContainText("valid email");
   expect(requests).toBe(0);
   await expect(form.getByLabel("New trainee student ID")).toHaveValue("UNCHANGED-ID");
-  await form.getByLabel("New trainee email").fill(email);
-  await form.getByLabel("New trainee full name").fill("   ");
+  await form.getByLabel("New account email").fill(email);
+  await form.getByLabel("New account full name").fill("   ");
   await form.getByRole("button", { name: "Create account", exact: true }).click();
   await expect(form.getByRole("alert")).toContainText("Full name is required");
   expect(requests).toBe(0);
-  await form.getByLabel("New trainee full name").fill("Retry employee");
+  await form.getByLabel("New account full name").fill("Retry employee");
   await page.route(
     (url) => url.href.includes(endpoint),
     (route) => route.abort(),

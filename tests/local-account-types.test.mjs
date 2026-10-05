@@ -241,7 +241,7 @@ test("RLS and column guards reject employment/role forgery while preserving OJT 
   });
 });
 
-test("public signup cannot select employment type or administrator status through metadata", async () => {
+test("public signup selects employment type but cannot grant administrator status", async () => {
   const client = local.client();
   const { user } = checked(
     await client.auth.signUp({
@@ -255,8 +255,8 @@ test("public signup cannot select employment type or administrator status throug
   assert.ok(user?.id);
   try {
     const row = checked(await local.admin.from("profiles").select().eq("id", user.id).single());
-    assert.equal(row.account_type, "ojt");
-    assert.equal(row.required_workdays, null);
+    assert.equal(row.account_type, "processing");
+    assert.equal(row.required_workdays, 1);
     assert.equal(row.is_admin, false);
   } finally {
     await client.auth.signOut();

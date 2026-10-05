@@ -1,12 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { setTimeout as delay } from "node:timers/promises";
 import { localSupabase, checked } from "../scripts/local-supabase.mjs";
 
 const local = localSupabase();
 const sql = postgres(local.databaseUrl, { max: 3, idle_timeout: 1 });
+test("checked-in Undo-removal migration compiles, even when the local database already has it", async () => {
+  const rollback = new Error("successful source rehearsal rollback");
+  const migration = readFileSync(
+    new URL("../supabase/migrations/20260924000000_disable_attendance_undo.sql", import.meta.url),
+    "utf8",
+  )
+    .replace(/^BEGIN;\s*/, "")
+    .replace(/\s*COMMIT;\s*$/, "");
+  await assert.rejects(
+    sql.begin(async (tx) => {
+      await tx`SET LOCAL lock_timeout = '5s'`;
+      await tx.unsafe(migration);
+      throw rollback;
+    }),
+    (error) => error === rollback,
+  );
+});
 const metadata = {
   full_name: "Integrity Test",
   student_id: "TEST",
