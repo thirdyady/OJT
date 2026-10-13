@@ -141,4 +141,85 @@
     background-color: var(--color-background);
     color: var(--color-foreground);
   }
+
+  button:not(:disabled),
+  a[href],
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition-property: background-color, border-color, color, box-shadow;
+    transition-duration: 150ms;
+  }
+
+  button:focus-visible,
+  a:focus-visible,
+  select:focus-visible {
+    outline: 2px solid #1d4ed8;
+    outline-offset: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    transition: none;
+  }
+}
+
+.checkout-static-sparkle {
+  display: none;
+}
+.checkout-confetti {
+  animation: checkout-burst 1050ms ease-out both;
+}
+.checkout-tick polyline,
+.checkout-tick path {
+  stroke-dasharray: 24;
+  animation: checkout-check 450ms ease-out both;
+}
+@keyframes checkout-burst {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.4);
+  }
+  12% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--burst-x), var(--burst-y)) rotate(var(--burst-spin)) scale(0.7);
+  }
+}
+@keyframes checkout-check {
+  from {
+    stroke-dashoffset: 24;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .checkout-confetti {
+    display: none;
+    animation: none;
+  }
+  .checkout-tick polyline,
+  .checkout-tick path {
+    animation: none;
+  }
+  .checkout-static-sparkle {
+    display: block;
+  }
 }

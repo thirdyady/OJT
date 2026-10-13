@@ -1,6 +1,5 @@
 ﻿// Run only on a trusted custodian machine. No browser or service-role reset endpoint.
 import postgres from "postgres";
-import { randomBytes } from "node:crypto";
 if (!process.stdin.isTTY || !process.env.DTR_CUSTODIAN_DATABASE_URL)
   throw new Error("An interactive terminal and DTR_CUSTODIAN_DATABASE_URL are required.");
 async function hidden(prompt) {
@@ -43,15 +42,15 @@ let password = await hidden("Temporary Chief password (hidden): ");
 let confirm = await hidden("Confirm temporary password (hidden): ");
 if (password !== confirm || password.length < 12 || Buffer.byteLength(password, "utf8") > 72)
   throw new Error("Passwords must match, be at least 12 characters and at most 72 UTF-8 bytes.");
-const recovery = randomBytes(24).toString("hex");
 let sql;
 try {
   sql = postgres(process.env.DTR_CUSTODIAN_DATABASE_URL, { max: 1, onnotice: () => {} });
-  await sql`INSERT INTO dtr_private.chief_secret(singleton,password_hash,recovery_hash,must_change) VALUES(true,extensions.crypt(${password},extensions.gen_salt('bf',12)),extensions.crypt(${recovery},extensions.gen_salt('bf',12)),true) ON CONFLICT(singleton) DO UPDATE SET password_hash=EXCLUDED.password_hash,recovery_hash=EXCLUDED.recovery_hash,must_change=true,version=dtr_private.chief_secret.version+1`;
+  const [{ recovery }] = await sql`SELECT dtr_private.generate_chief_recovery_code() AS recovery`;
+  await sql`INSERT INTO dtr_private.chief_secret(singleton,password_hash,recovery_hash,must_change) VALUES(true,extensions.crypt(${password},extensions.gen_salt('bf',12)),extensions.crypt(dtr_private.normalize_chief_recovery_code(${recovery}),extensions.gen_salt('bf',12)),false) ON CONFLICT(singleton) DO UPDATE SET password_hash=EXCLUDED.password_hash,recovery_hash=EXCLUDED.recovery_hash,must_change=false,version=dtr_private.chief_secret.version+1`;
   password = "";
   confirm = "";
   console.log(
-    "Temporary password installed. The Chief must change it before approving DTR edits or deletions. Store this one-time recovery code securely:",
+    "Initial password installed. The Chief may change it in Settings at any time. Store this one-time recovery code securely:",
   );
   console.log(recovery);
 } catch {

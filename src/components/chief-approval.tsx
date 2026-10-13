@@ -1,8 +1,9 @@
 ﻿import { useEffect, useRef, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { CheckCircle2, KeyRound, RotateCcw, ShieldCheck } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, KeyRound, RotateCcw, ShieldCheck } from "lucide-react";
 import { prepareChiefAction, approveChiefAction } from "@/lib/chief-approval.functions";
 import type { ChiefRequest, ChiefResponse, PunchValues } from "@/lib/chief-input";
+import { cn } from "@/lib/utils";
 import {
   AlertDialog,
   AlertDialogContent,
@@ -11,8 +12,10 @@ import {
   AlertDialogDescription,
 } from "@/components/ui/alert-dialog";
 
-const inputClass = "mt-1 w-full rounded border p-2";
-const buttonClass = "rounded border px-3 py-2 text-sm disabled:opacity-50";
+const inputClass =
+  "mt-1 min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:bg-slate-50";
+const buttonClass =
+  "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:cursor-not-allowed disabled:opacity-50";
 const fields = ["check_in", "break_out", "break_in", "check_out"] as const;
 const labels = {
   check_in: "Check In",
@@ -105,12 +108,15 @@ export function ChiefApproval({
       }}
     >
       <AlertDialogContent
-        className="max-h-[90vh] overflow-y-auto"
+        className="max-h-[90vh] overflow-y-auto rounded-2xl border-slate-200"
         data-chief-prepare-endpoint={prepareChiefAction.url}
         data-chief-approve-endpoint={approveChiefAction.url}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>Approval Needed</AlertDialogTitle>
+          <AlertDialogTitle className="flex items-center gap-2 text-blue-950">
+            <ShieldCheck aria-hidden="true" className="h-5 w-5" />
+            Approval Needed
+          </AlertDialogTitle>
           <AlertDialogDescription>
             {request.operation === "recover_ssp"
               ? "Ask the Chief or authorized custodian to enter the recovery code. The current password cannot be displayed."
@@ -118,7 +124,7 @@ export function ChiefApproval({
           </AlertDialogDescription>
         </AlertDialogHeader>
         {prepared?.account && (
-          <dl className="text-sm">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm [&_dt]:text-slate-500 [&_dd]:min-w-0 [&_dd]:break-words [&_dd]:font-medium">
             <dt>Employee</dt>
             <dd>{prepared.account.name}</dd>
             <dt>Email</dt>
@@ -143,19 +149,46 @@ export function ChiefApproval({
             value={credential}
             onChange={(e) => setCredential(e.target.value)}
             autoComplete="off"
+            autoCapitalize={request.operation === "recover_ssp" ? "characters" : "none"}
+            spellCheck={false}
+            aria-describedby={
+              request.operation === "recover_ssp" ? "recovery-code-help" : undefined
+            }
             maxLength={72}
             disabled={busy}
           />
         </label>
+        {request.operation === "recover_ssp" && (
+          <p id="recovery-code-help" className="text-xs text-slate-500">
+            New codes contain 12 letters. Capitalization, spaces and hyphens do not matter. Older
+            recovery codes still work when entered exactly as issued.
+          </p>
+        )}
         <button
           type="button"
-          className={buttonClass}
+          className={cn(
+            buttonClass,
+            show && "border-blue-700 bg-blue-950 text-white hover:bg-blue-900",
+          )}
           aria-pressed={show}
           onClick={() => setShow(!show)}
           disabled={busy}
         >
+          {show ? (
+            <EyeOff aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <Eye aria-hidden="true" className="h-4 w-4" />
+          )}
           {show ? "Hide password" : "Show password"}
         </button>
+        <p
+          className={`text-xs ${show ? "font-semibold text-blue-800" : "text-slate-500"}`}
+          aria-live="polite"
+        >
+          {show
+            ? "Visibility on — the approval credential is visible."
+            : "Visibility off — the approval credential is hidden."}
+        </p>
         {settings && (
           <>
             <label>
@@ -190,12 +223,17 @@ export function ChiefApproval({
           </p>
         )}
         {!prepared && !error && <p role="status">Checking approval request…</p>}
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4">
           <button className={buttonClass} onClick={close} disabled={busy}>
             Cancel
           </button>
           <button
-            className={buttonClass}
+            className={cn(
+              buttonClass,
+              request.operation === "delete_account"
+                ? "border-red-700 bg-red-700 text-white hover:bg-red-800"
+                : "border-blue-950 bg-blue-950 text-white hover:bg-blue-900",
+            )}
             onClick={submit}
             disabled={busy || !prepared || !credential || (settings && !newPassword)}
           >
@@ -346,7 +384,7 @@ export function DtrEditor({
             Cancel
           </button>
           <button
-            className={buttonClass}
+            className={cn(buttonClass, "border-blue-950 bg-blue-950 text-white hover:bg-blue-900")}
             onClick={save}
             disabled={!date || reason.trim().length < 3}
           >

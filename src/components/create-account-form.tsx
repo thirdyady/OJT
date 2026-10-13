@@ -121,7 +121,7 @@ export function CreateAccountForm({
       noValidate
       data-admin-create-account-endpoint={createTraineeAccount.url}
       aria-busy={busy}
-      className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+      className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
     >
       <div className="mb-3">
         <h3 className="text-sm font-semibold text-slate-900">Create account</h3>
@@ -193,7 +193,7 @@ export function CreateAccountForm({
         <button
           type="submit"
           disabled={busy || disabled}
-          className="rounded-md bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+          className="min-h-11 rounded-lg bg-blue-950 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-900 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {busy ? "Creating..." : "Create account"}
         </button>

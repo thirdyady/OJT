@@ -1,4 +1,9 @@
 import { AdminReports } from "@/components/admin-reports";
+import { AdminWorkspace } from "@/components/admin-workspace";
+import { AttendanceCalendar } from "@/components/attendance-calendar";
+import { CheckoutCelebration } from "@/components/checkout-celebration";
+import { AttendanceEmpty, AttendanceLoading } from "@/components/attendance-states";
+import { Check, Clock3 } from "lucide-react";
 import { roleReportText } from "@/lib/attendance-reports.mjs";
 import {
   ChiefApproval,
@@ -7,7 +12,7 @@ import {
   type EditableDtr,
 } from "@/components/chief-approval";
 import type { ChiefRequest } from "@/lib/chief-input";
-import { accountLabels } from "@/lib/account-progress.mjs";
+import { accountLabels, accountProgress } from "@/lib/account-progress.mjs";
 import { AccountProfileSummary, AccountProgressSummary } from "@/components/account-summary";
 import type { Enums } from "@/integrations/supabase/types";
 import { CreateAccountForm } from "@/components/create-account-form";
@@ -331,6 +336,7 @@ function buildDtrHtmlFor(
 
   const copy = `
     <div class="copy">
+      <div class="agency">PHILIPPINE STATISTICS AUTHORITY</div>
       <div class="title-wrap"><h1>DAILY TIME RECORD</h1></div>
       <div class="name-block">
         <div class="name-value">${escapeHtml(fullName)}</div>
@@ -378,6 +384,7 @@ function buildDtrHtmlFor(
     .page { display: flex; flex-direction: row; width: 100%; min-height: 257mm; }
     .copy { width: 50%; padding: 4mm 12mm; border-right: 1px dashed #bbb; display: flex; flex-direction: column; }
     .copy:last-child { border-right: none; }
+    .agency { text-align: center; font-size: 7px; font-weight: bold; letter-spacing: 0.5px; margin-bottom: 5px; color: #172554; }
     .title-wrap { border-top: 2.5px double #000; border-bottom: 2.5px double #000; padding: 3px 0; margin-bottom: 6px; }
     h1 { font-size: 15px; font-weight: 900; text-align: center; letter-spacing: 1.5px; }
     .name-block { text-align: center; margin-bottom: 1px; }
@@ -387,6 +394,9 @@ function buildDtrHtmlFor(
     .month-line { font-size: 9px; margin-bottom: 5px; }
     .month-line strong { font-weight: bold; }
     table { width: 100%; border-collapse: collapse; }
+    thead { display: table-header-group; }
+    tr, .trainee-sig, .supervisor-sig { break-inside: avoid; page-break-inside: avoid; }
+    td, .total-line { font-variant-numeric: tabular-nums; }
     table, th, td { border: 1px solid #000; }
     th { font-size: 8px; text-align: center; padding: 2px 0; font-weight: bold; }
     td { height: 13px; }
@@ -505,6 +515,7 @@ function downloadWordDtrFor(
   <col style="width:21.75%;"/>
   <col style="width:21.75%;"/>
 </colgroup>
+<tr><td colspan="5" style="text-align:center;font-size:6pt;font-weight:bold;letter-spacing:0.4pt;color:#172554;padding-bottom:4px;">PHILIPPINE STATISTICS AUTHORITY</td></tr>
 <tr>
   <td colspan="5" style="
     border-top:2.5pt double #000;
@@ -673,6 +684,8 @@ ${rows31}
     padding: 0;
   }
   table { border-collapse: collapse; }
+  tr { page-break-inside: avoid; }
+  td { font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
@@ -739,6 +752,8 @@ function DashboardPage() {
   const [attendanceConflict, setAttendanceConflict] = useState(false);
   const [accountInactive, setAccountInactive] = useState(false);
   const [savingAttendance, setSavingAttendance] = useState(false);
+  const [checkoutMessage, setCheckoutMessage] = useState("");
+  const [checkoutCelebration, setCheckoutCelebration] = useState<"saved" | "goal" | null>(null);
   const attendanceLock = useRef(false);
   const profileLock = useRef(false);
   const inactiveSessionLock = useRef(false);
@@ -850,6 +865,8 @@ function DashboardPage() {
     if (!userId || attendanceLock.current || p !== nextPunch) return;
     attendanceLock.current = true;
     setSavingAttendance(true);
+    setCheckoutMessage("");
+    setCheckoutCelebration(null);
     setActionError("");
     setAttendanceConflict(false);
     try {
@@ -869,6 +886,33 @@ function DashboardPage() {
         throw new Error(`Attendance was not saved. ${error.message}`);
       }
       if (!data) throw new AttendanceConflictError();
+      if (p === "check_out") {
+        const before = accountProgress(profile, rows);
+        const after = accountProgress(profile, [
+          data as DtrRow,
+          ...rows.filter((r) => r.entry_date !== key),
+        ]);
+        const gained = (after.credited ?? 0) - (before.credited ?? 0);
+        if (computeHours(data as DtrRow) > 0) {
+          setCheckoutCelebration(
+            before.percentage !== null &&
+              before.percentage < 100 &&
+              after.percentage !== null &&
+              after.percentage >= 100
+              ? "goal"
+              : "saved",
+          );
+        }
+        if (after.unit && gained > 0) {
+          const reward =
+            after.unit === "hours"
+              ? `${gained.toFixed(2)} credited hours`
+              : `${gained} completed workday${gained === 1 ? "" : "s"}`;
+          setCheckoutMessage(
+            `Checkout saved. +${reward}! ${after.percentage !== null && after.percentage >= 100 ? "Goal reached. Well done!" : "That's another step forward. Well done today!"}`,
+          );
+        }
+      }
       if (data) {
         setRows((prev) => {
           const other = prev.filter((r) => r.entry_date !== key);
@@ -1073,7 +1117,7 @@ function DashboardPage() {
               alt="Philippine Statistics Authority"
               className="h-10 w-10 shrink-0 rounded-full object-contain sm:h-12 sm:w-12"
             />
-            <div>
+            <div className="min-w-0">
               <h1 className="text-lg font-semibold tracking-tight text-slate-900 sm:text-xl">
                 PSA Attendance · {profile.is_admin ? "Admin" : "DTR"}
               </h1>
@@ -1087,7 +1131,7 @@ function DashboardPage() {
               </p>
             </div>
           </div>
-          <div className="flex items-center justify-between gap-4 sm:justify-end">
+          <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
             <div className="text-left sm:text-right">
               <div className="font-mono text-xl font-semibold text-slate-900 sm:text-2xl">
                 {now.toLocaleTimeString([], {
@@ -1107,12 +1151,15 @@ function DashboardPage() {
                 })}
               </div>
             </div>
-            <Link to="/reset-password" className="text-xs font-medium text-slate-600 underline">
+            <Link
+              to="/reset-password"
+              className="inline-flex min-h-11 items-center rounded-lg px-3 text-xs font-semibold text-blue-900 hover:bg-blue-50"
+            >
               Change password
             </Link>
             <button
               onClick={signOut}
-              className="shrink-0 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+              className="min-h-11 shrink-0 rounded-lg border border-slate-300 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
             >
               Sign out
             </button>
@@ -1121,6 +1168,36 @@ function DashboardPage() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-4 px-3 py-5 sm:space-y-6 sm:px-6 sm:py-8">
+        {!loading && !loadError && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-widest text-blue-800">
+                {profile.is_admin ? "Administration" : "Your attendance"}
+              </p>
+              <h2 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+                Welcome back
+                {profile.full_name?.trim() ? `, ${profile.full_name.trim().split(/\s+/)[0]}` : ""}.
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {profile.is_admin
+                  ? "A clear view of your team, attendance, and records."
+                  : "One place to record your day and review your attendance."}
+              </p>
+            </div>
+            {!profile.is_admin && (
+              <span className="inline-flex w-fit items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700">
+                <Clock3 aria-hidden="true" className="h-4 w-4 text-blue-700" />
+                {todayWarning
+                  ? "Attendance needs attention"
+                  : !nextPunch
+                    ? "Today's attendance complete"
+                    : today.check_in
+                      ? `Up next: ${LABELS[nextPunch]}`
+                      : "Ready to start your day"}
+              </span>
+            )}
+          </div>
+        )}
         {actionError && (
           <div
             role="alert"
@@ -1140,14 +1217,7 @@ function DashboardPage() {
           </div>
         )}
         {loading ? (
-          <div
-            role="status"
-            aria-live="polite"
-            aria-busy="true"
-            className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-500"
-          >
-            Loading…
-          </div>
+          <AttendanceLoading label="Loading your dashboard…" />
         ) : loadError ? (
           <div role="alert" className="rounded border border-red-200 bg-white p-5 text-red-700">
             <p>{loadError}</p>
@@ -1168,7 +1238,7 @@ function DashboardPage() {
               <>
                 <p className="text-sm">Account type: OJT</p>
                 {/* Profile */}
-                <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
+                <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5">
                   <div className="mb-3 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-slate-900">Trainee details</h2>
                     {profileDirty && (
@@ -1241,7 +1311,7 @@ function DashboardPage() {
                 {/* OJT progress */}
                 <section
                   aria-labelledby="ojt-progress-heading"
-                  className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5"
+                  className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div>
@@ -1299,12 +1369,17 @@ function DashboardPage() {
                 </section>
               </>
             )}
-            <AccountProgressSummary profile={profile} records={rows} />
+            <AccountProgressSummary
+              profile={profile}
+              records={rows}
+              checkoutMessage={checkoutMessage}
+            />
 
             {/* Punch card */}
             <section
+              aria-label="Today's attendance"
               aria-busy={savingAttendance}
-              className="rounded-xl border border-slate-200 bg-white p-4 sm:p-6"
+              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6"
             >
               <div className="mb-5 flex items-center justify-between gap-2">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -1312,31 +1387,61 @@ function DashboardPage() {
                 </h2>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {ORDER.map((p) => {
+              <ol aria-label="Attendance steps" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {ORDER.map((p, index) => {
                   const done = Boolean(today[p]);
                   const isNext = nextPunch === p;
                   return (
-                    <div
+                    <li
                       key={p}
-                      className={`rounded-lg border p-3 sm:p-4 ${
+                      aria-current={isNext ? "step" : undefined}
+                      className={`relative rounded-xl border p-3 sm:p-4 ${
                         done
                           ? "border-emerald-200 bg-emerald-50"
                           : isNext
-                            ? "border-slate-300 bg-white"
-                            : "border-slate-200 bg-slate-50 opacity-70"
+                            ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
+                            : "border-slate-200 bg-slate-50"
                       }`}
                     >
+                      {index < 3 && (
+                        <span
+                          aria-hidden="true"
+                          className={`absolute -right-3 top-7 z-10 hidden h-0.5 w-3 sm:block ${done ? "bg-emerald-300" : "bg-slate-200"}`}
+                        />
+                      )}
+                      <div className="mb-3 flex items-center justify-between gap-1">
+                        <span
+                          className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${done ? "bg-emerald-700 text-white" : isNext ? "bg-blue-900 text-white" : "bg-slate-200 text-slate-600"}`}
+                          aria-hidden="true"
+                        >
+                          {done ? (
+                            <Check
+                              className={
+                                p === "check_out" && checkoutCelebration
+                                  ? "checkout-tick h-4 w-4"
+                                  : "h-4 w-4"
+                              }
+                            />
+                          ) : (
+                            index + 1
+                          )}
+                        </span>
+                        <span
+                          className={`text-[10px] font-semibold ${done ? "text-emerald-800" : isNext ? "text-blue-900" : "text-slate-500"}`}
+                        >
+                          {done ? "Recorded" : isNext ? "Up next" : "Pending"}
+                        </span>
+                      </div>
                       <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500 sm:text-xs">
                         {LABELS[p]}
                       </div>
                       <div className="mt-1 font-mono text-base font-semibold text-slate-900 sm:text-lg">
                         {fmtTime(today[p])}
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ol>
 
               {todayWarning ? (
                 <p
@@ -1362,13 +1467,16 @@ function DashboardPage() {
                     onClick={() => punch(nextPunch)}
                     disabled={savingAttendance}
                     aria-busy={savingAttendance}
-                    className="w-full rounded-md bg-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto sm:py-2.5"
+                    className="min-h-11 w-full rounded-lg bg-blue-950 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-blue-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-900 disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto"
                   >
                     {savingAttendance ? "Saving…" : `${LABELS[nextPunch]} now`}
                   </button>
                 ) : (
-                  <div className="rounded-md bg-emerald-100 px-4 py-2 text-sm font-medium text-emerald-800">
-                    Day complete · {computeHours(today).toFixed(2)} hrs
+                  <div className="relative overflow-hidden rounded-xl bg-emerald-100 py-4 pl-4 pr-10 text-sm font-medium text-emerald-800">
+                    {checkoutCelebration && (
+                      <CheckoutCelebration goalReached={checkoutCelebration === "goal"} />
+                    )}
+                    Day complete · {checkoutMessage || `${computeHours(today).toFixed(2)} hrs`}
                   </div>
                 )}
                 <span className="text-xs text-slate-500" aria-live="polite">
@@ -1384,7 +1492,7 @@ function DashboardPage() {
             </section>
 
             {/* DTR table */}
-            <section className="rounded-xl border border-slate-200 bg-white">
+            <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
               <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
                 <div>
                   <h2 className="text-sm font-semibold text-slate-900">Daily Time Record</h2>
@@ -1441,11 +1549,20 @@ function DashboardPage() {
               </div>
 
               {/* Mobile: card list */}
+              <AttendanceCalendar
+                key={`${downloadYear}-${downloadMonth}`}
+                records={visibleRows}
+                month={downloadMonth}
+                year={downloadYear}
+                today={key}
+                warning={attendanceWarning}
+              />
               <div className="divide-y divide-slate-100 sm:hidden">
                 {visibleRows.length === 0 && (
-                  <p className="px-4 py-10 text-center text-sm text-slate-400">
-                    No records for {MONTHS[downloadMonth]} {downloadYear}.
-                  </p>
+                  <AttendanceEmpty
+                    title={`No records for ${MONTHS[downloadMonth]} ${downloadYear}.`}
+                    description="Your attendance history starts with your first check-in. Choose another month to review earlier records."
+                  />
                 )}
                 {visibleRows.map((r) => {
                   const h = computeHours(r);
@@ -1498,8 +1615,11 @@ function DashboardPage() {
                   <tbody className="divide-y divide-slate-100">
                     {visibleRows.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="px-5 py-10 text-center text-sm text-slate-400">
-                          No records for {MONTHS[downloadMonth]} {downloadYear}.
+                        <td colSpan={6}>
+                          <AttendanceEmpty
+                            title={`No records for ${MONTHS[downloadMonth]} ${downloadYear}.`}
+                            description="Your attendance history starts with your first check-in. Choose another month to review earlier records."
+                          />
                         </td>
                       </tr>
                     )}
@@ -1597,6 +1717,7 @@ function AdminDashboard() {
   const [mutationConflict, setMutationConflict] = useState(false);
 
   const [search, setSearch] = useState("");
+  const [accountTypeFilter, setAccountTypeFilter] = useState<Enums<"account_type"> | "all">("all");
 
   // Month/year the admin wants to view/print/download for the selected
   // trainee. This now also drives which rows are shown in the table below.
@@ -1810,13 +1931,15 @@ function AdminDashboard() {
 
   const filteredTrainees = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return trainees;
-    return trainees.filter((t) =>
-      [t.full_name, t.student_id, t.company, t.ojt_title]
-        .filter(Boolean)
-        .some((v) => (v as string).toLowerCase().includes(q)),
+    return trainees.filter(
+      (t) =>
+        (accountTypeFilter === "all" || t.account_type === accountTypeFilter) &&
+        (!q ||
+          [t.full_name, t.student_id, t.company, t.ojt_title]
+            .filter(Boolean)
+            .some((v) => (v as string).toLowerCase().includes(q))),
     );
-  }, [trainees, search]);
+  }, [trainees, search, accountTypeFilter]);
 
   // Only the selected trainee's rows for the currently selected month/year —
   // this is what the table below renders, kept in sync with the dropdowns.
@@ -1887,7 +2010,16 @@ function AdminDashboard() {
   };
 
   return (
-    <section aria-labelledby="manage-accounts-heading" className="space-y-3">
+    <AdminWorkspace
+      reports={
+        <AdminReports
+          profiles={trainees}
+          profilesLoading={loadingTrainees}
+          profilesError={traineeError}
+        />
+      }
+      settings={<ChiefSettings />}
+    >
       <div>
         <h2 id="manage-accounts-heading" className="text-base font-semibold text-slate-900">
           Manage Accounts
@@ -1958,12 +2090,6 @@ function AdminDashboard() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-      <AdminReports
-        profiles={trainees}
-        profilesLoading={loadingTrainees}
-        profilesError={traineeError}
-      />
-      <ChiefSettings />
       {editor && (
         <DtrEditor
           key={editor.userId}
@@ -2010,43 +2136,79 @@ function AdminDashboard() {
         className="grid min-w-0 gap-4 sm:gap-6 lg:grid-cols-[300px_1fr]"
       >
         {/* Account list */}
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <section
+          aria-label="Account list"
+          className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"
+        >
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">
               Accounts {trainees.length > 0 && `(${trainees.length})`}
             </h2>
           </div>
+          <label className="mb-3 block">
+            <span className="mb-1 block text-xs font-semibold text-slate-600">Account type</span>
+            <select
+              aria-label="Filter accounts by type"
+              value={accountTypeFilter}
+              onChange={(e) =>
+                setAccountTypeFilter(e.target.value as Enums<"account_type"> | "all")
+              }
+              className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="all">All account types</option>
+              {Object.entries(accountLabels).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
           <input
+            aria-label="Search accounts"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search name, ID, company…"
             className="mb-3 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-xs text-slate-900 outline-none focus:border-slate-400"
           />
+          {!loadingTrainees && !traineeError && (
+            <p aria-live="polite" aria-atomic="true" className="mb-3 text-xs text-slate-500">
+              Showing {filteredTrainees.length} of {trainees.length} accounts
+            </p>
+          )}
           {traineeError && (
             <p className="mb-2 text-xs text-red-600">
               Couldn't load accounts. Reload the page to try again.
             </p>
           )}
           {loadingTrainees ? (
-            <p className="text-xs text-slate-400">Loading…</p>
+            <AttendanceLoading label="Loading accounts…" />
           ) : filteredTrainees.length === 0 ? (
-            <p className="text-xs text-slate-400">No accounts found.</p>
+            <AttendanceEmpty
+              title="No accounts found."
+              description="Try another account type or change your search."
+            />
           ) : (
             <ul className="max-h-[50vh] space-y-1 overflow-y-auto lg:max-h-[70vh]">
               {filteredTrainees.map((t) => (
                 <li key={t.id}>
                   <button
+                    aria-pressed={selectedId === t.id}
                     onClick={() => loadEntries(t.id)}
-                    className={`w-full rounded-md px-3 py-2 text-left text-sm transition ${
+                    className={`w-full rounded-xl border px-3 py-3 text-left text-sm transition-colors ${
                       selectedId === t.id
-                        ? "bg-slate-900 text-white"
-                        : "text-slate-700 hover:bg-slate-50"
+                        ? "border-blue-900 bg-blue-950 text-white shadow-sm"
+                        : "border-transparent text-slate-700 hover:border-slate-200 hover:bg-slate-50"
                     }`}
                   >
-                    <div className="font-medium">{t.full_name || "Unnamed"}</div>
+                    <div className="break-words font-semibold">{t.full_name || "Unnamed"}</div>
+                    <span
+                      className={`my-1 inline-flex rounded-md px-2 py-0.5 text-[10px] font-semibold ${selectedId === t.id ? "bg-white/15 text-blue-100" : "bg-blue-50 text-blue-900"}`}
+                    >
+                      {accountLabels[t.account_type]}
+                    </span>
                     <div
                       className={`text-xs ${
-                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                        selectedId === t.id ? "text-slate-300" : "text-slate-600"
                       }`}
                     >
                       {t.account_type === "ojt"
@@ -2056,14 +2218,14 @@ function AdminDashboard() {
                     </div>
                     <div
                       className={`text-xs ${
-                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                        selectedId === t.id ? "text-slate-300" : "text-slate-600"
                       }`}
                     >
                       {t.ojt_title || "Position not provided"}
                     </div>
                     <div
                       className={`text-xs ${
-                        selectedId === t.id ? "text-slate-300" : "text-slate-400"
+                        selectedId === t.id ? "text-slate-300" : "text-slate-600"
                       }`}
                     >
                       {t.account_type === "ojt"
@@ -2075,16 +2237,17 @@ function AdminDashboard() {
                           : accountLabels[t.account_type]}
                     </div>
                     <div
-                      className={`text-xs font-medium ${
+                      className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-semibold ${
                         selectedId === t.id
                           ? t.is_active
-                            ? "text-emerald-300"
-                            : "text-amber-300"
+                            ? "bg-emerald-950 text-emerald-200"
+                            : "bg-amber-950 text-amber-200"
                           : t.is_active
-                            ? "text-emerald-600"
-                            : "text-amber-600"
+                            ? "bg-emerald-50 text-emerald-800"
+                            : "bg-amber-50 text-amber-800"
                       }`}
                     >
+                      <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />
                       {t.is_active ? "Active account" : "Inactive account"}
                     </div>
                   </button>
@@ -2092,10 +2255,10 @@ function AdminDashboard() {
               ))}
             </ul>
           )}
-        </div>
+        </section>
 
         {/* Selected trainee's DTR */}
-        <div className="rounded-xl border border-slate-200 bg-white">
+        <div className="rounded-2xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-3 border-b border-slate-200 px-4 py-4 sm:px-5">
             <div>
               <h2 className="text-sm font-semibold text-slate-900">
@@ -2363,6 +2526,16 @@ function AdminDashboard() {
             )}
           </div>
 
+          {selectedId && !loadingEntries && !entriesError && (
+            <AttendanceCalendar
+              key={`${selectedId}-${docYear}-${docMonth}`}
+              records={visibleEntries}
+              month={docMonth}
+              year={docYear}
+              today={todayKey()}
+              warning={attendanceWarning}
+            />
+          )}
           {!selectedId ? (
             <p className="px-5 py-10 text-center text-sm text-slate-400">
               Pick an account from the list to view their records.
@@ -2372,15 +2545,17 @@ function AdminDashboard() {
               Couldn't load attendance records. Reload the page to try again.
             </p>
           ) : loadingEntries ? (
-            <p className="px-5 py-10 text-center text-sm text-slate-400">Loading records…</p>
+            <AttendanceLoading label="Loading records…" />
           ) : entries.length === 0 ? (
-            <p className="px-5 py-10 text-center text-sm text-slate-400">
-              No records for this account yet.
-            </p>
+            <AttendanceEmpty
+              title="No records for this account yet."
+              description="Saved attendance will appear here once this person checks in."
+            />
           ) : visibleEntries.length === 0 ? (
-            <p className="px-5 py-10 text-center text-sm text-slate-400">
-              No records for {MONTHS[docMonth]} {docYear}.
-            </p>
+            <AttendanceEmpty
+              title={`No records for ${MONTHS[docMonth]} ${docYear}.`}
+              description="Choose another month to review this account's attendance."
+            />
           ) : (
             <>
               {/* Mobile: card list */}
@@ -2484,6 +2659,6 @@ function AdminDashboard() {
           )}
         </div>
       </fieldset>
-    </section>
+    </AdminWorkspace>
   );
 }
