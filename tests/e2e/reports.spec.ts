@@ -60,6 +60,7 @@ async function login(page: Page, type = "admin") {
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  if (type === "admin") await page.getByRole("tab", { name: "Reports", exact: true }).click();
 }
 test("report filters, range totals, role targets, exports and stale-filter prevention", async ({
   page,

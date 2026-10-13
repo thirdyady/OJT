@@ -125,6 +125,183 @@ for (const type of types)
       await client.auth.signOut();
     }
   });
+for (const type of ["ojt", "processing"])
+  test(`${type} rewards only saved checkout credit and supports mobile milestones`, async ({
+    page,
+  }, testInfo) => {
+    const user = users.find((u) => u.type === type)!;
+    const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Manila" }).format(new Date());
+    checked(
+      await local.admin.from("dtr_entries").insert({
+        user_id: user.id,
+        entry_date: date,
+        check_in: `${date}T00:00:00+08:00`,
+        break_out: `${date}T00:00:01+08:00`,
+        break_in: `${date}T00:00:02+08:00`,
+      }),
+    );
+    try {
+      await login(page, user);
+      const card = page.getByRole("region", {
+        name: type === "ojt" ? "OJT progress" : "Processing progress",
+        exact: true,
+      });
+      await expect(card.getByRole("list", { name: "Progress milestones" })).toBeVisible();
+      await expect(card.getByRole("status")).toBeEmpty();
+      await page.route("**/rest/v1/rpc/dtr_punch", (route) =>
+        route.fulfill({
+          status: 500,
+          contentType: "application/json",
+          body: JSON.stringify({ message: "Test save failure" }),
+        }),
+      );
+      await page.getByRole("button", { name: "Check Out now", exact: true }).click();
+      await expect(page.getByText(/Attendance was not saved/)).toBeVisible();
+      await expect(page.getByTestId("checkout-celebration")).toHaveCount(0);
+      await expect(card.getByRole("status")).toBeEmpty();
+      await page.unroute("**/rest/v1/rpc/dtr_punch");
+      await page.getByRole("button", { name: "Check Out now", exact: true }).click();
+      await expect(card.getByRole("status")).toContainText("Checkout saved.");
+      await expect(page.getByTestId("checkout-celebration")).toBeVisible();
+      await expect(page.locator(".checkout-tick")).toHaveCount(1);
+      await expect(card.getByRole("status")).toContainText(
+        type === "ojt" ? "credited hours" : "+1 completed workday",
+      );
+      await card.screenshot({ path: testInfo.outputPath(`${type}-progress-desktop.png`) });
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await expect(page.locator(".checkout-static-sparkle")).toBeVisible();
+      await expect(page.locator(".checkout-confetti").first()).toBeHidden();
+      await card.screenshot({ path: testInfo.outputPath(`${type}-progress-mobile.png`) });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      await page.reload();
+      await expect(page.getByTestId("checkout-celebration")).toHaveCount(0);
+      await expect(card.getByRole("list", { name: "Progress milestones" })).toBeVisible();
+      await expect(card.getByRole("status")).toBeEmpty();
+    } finally {
+      checked(
+        await local.admin
+          .from("dtr_entries")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("entry_date", date),
+      );
+    }
+  });
+
+for (const type of types)
+  test(`${type} calendar shows saved attendance, details, empty dates and leap months`, async ({
+    page,
+  }, testInfo) => {
+    await login(
+      page,
+      users.find((u) => u.type === type)!,
+    );
+    await page.getByLabel("Select year to view/download", { exact: true }).selectOption("2000");
+    await page.getByLabel("Select month to view/download", { exact: true }).selectOption("0");
+    const calendar = page.getByRole("region", { name: "Attendance calendar", exact: true });
+    const complete = calendar.getByRole("button", {
+      name: "1 January 2000: Complete",
+      exact: true,
+    });
+    await expect(calendar.getByRole("button")).toHaveCount(31);
+    await complete.focus();
+    await page.keyboard.press("Enter");
+    await expect(complete).toHaveAttribute("aria-pressed", "true");
+    await expect(calendar).toContainText("Credited hours: 8.00 hrs");
+    await calendar.getByRole("button", { name: "2 January 2000: Incomplete", exact: true }).click();
+    await expect(calendar).toContainText("Not recorded");
+    await expect(calendar).toContainText("Credited hours: 0.00 hrs");
+    await calendar.getByRole("button", { name: "3 January 2000: No record", exact: true }).click();
+    await expect(calendar).toContainText("This is not an absence or leave classification.");
+    if (type === "ojt") {
+      await calendar.screenshot({ path: testInfo.outputPath("calendar-desktop.png") });
+      await page.setViewportSize({ width: 375, height: 812 });
+      await calendar.screenshot({ path: testInfo.outputPath("calendar-mobile.png") });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    await page.getByLabel("Select month to view/download", { exact: true }).selectOption("1");
+    await expect(calendar.getByRole("button")).toHaveCount(29);
+    await expect(calendar.getByRole("button", { pressed: true })).toHaveCount(0);
+    await expect(
+      calendar.getByRole("button", { name: "29 February 2000: No record", exact: true }),
+    ).toBeVisible();
+  });
+
+test("account-type filter combines with search and restores all categories", async ({ page }) => {
+  await login(
+    page,
+    users.find((u) => u.type === "admin")!,
+  );
+  const panel = page.getByRole("region", { name: "Account list", exact: true });
+  const filter = panel.getByLabel("Filter accounts by type");
+  const search = panel.getByLabel("Search accounts");
+  await expect(page.getByRole("tab", { name: "Accounts", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(page.getByRole("region", { name: "Attendance reports", exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("region", { name: "Chief approval settings", exact: true }),
+  ).toHaveCount(0);
+  await expect(filter).toHaveValue("all");
+  for (const type of types) {
+    await filter.selectOption(type);
+    for (const user of users.filter((u) => u.type !== "admin")) {
+      const button = panel.getByRole("button", { name: new RegExp(user.name) });
+      if (user.type === type) await expect(button).toBeVisible();
+      else await expect(button).toHaveCount(0);
+    }
+    const user = users.find((u) => u.type === type)!;
+    await search.fill(user.name);
+    await expect(panel.getByRole("button")).toHaveCount(1);
+    await panel.getByRole("button").click();
+    await expect(page.getByRole("region", { name: "Account profile" })).toContainText(user.name);
+    if (type === "ojt") {
+      await page.getByRole("tab", { name: "Accounts", exact: true }).focus();
+      await page.keyboard.press("ArrowRight");
+      await expect(page.getByRole("tab", { name: "Reports", exact: true })).toHaveAttribute(
+        "aria-selected",
+        "true",
+      );
+      await expect(panel).toBeHidden();
+      await expect(
+        page.getByRole("region", { name: "Attendance reports", exact: true }),
+      ).toBeVisible();
+      await page
+        .getByRole("tabpanel", { name: "Reports", exact: true })
+        .screenshot({ path: test.info().outputPath("reports-tab-desktop.png") });
+      await page.keyboard.press("ArrowRight");
+      await expect(
+        page.getByRole("region", { name: "Chief approval settings", exact: true }),
+      ).toBeVisible();
+      await page.setViewportSize({ width: 375, height: 812 });
+      await page
+        .getByRole("tablist", { name: "Administrator sections", exact: true })
+        .screenshot({ path: test.info().outputPath("admin-tabs-mobile.png") });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+      await page.getByRole("tab", { name: "Accounts", exact: true }).click();
+      await expect(filter).toHaveValue("ojt");
+      await expect(search).toHaveValue(user.name);
+      await expect(page.getByRole("region", { name: "Account profile" })).toContainText(user.name);
+    }
+    await search.fill("no-matching-account-" + randomUUID());
+    await expect(panel.getByText("No accounts found.", { exact: true })).toBeVisible();
+    await search.clear();
+  }
+  await filter.selectOption("all");
+  for (const user of users)
+    await expect(panel.getByRole("button", { name: new RegExp(user.name) })).toBeVisible();
+});
+
 test("admin summaries agree for all categories and incomplete employee values are explicit", async ({
   page,
 }) => {

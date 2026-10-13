@@ -1,6 +1,7 @@
 ﻿import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { localSupabase, checked } from "../scripts/local-supabase.mjs";
 import {
@@ -71,6 +72,37 @@ const snapshot = (row) =>
   Object.fromEntries(
     ["id", "check_in", "break_out", "break_in", "check_out"].map((k) => [k, row[k]]),
   );
+
+test("optional initial password migration preserves credentials and permits approval preparation", async () => {
+  await sql`UPDATE dtr_private.chief_secret SET must_change=true WHERE singleton`;
+  const [before] = await sql`SELECT * FROM dtr_private.chief_secret WHERE singleton`;
+  const connection = await sql.reserve();
+  try {
+    await connection.unsafe(
+      readFileSync(
+        new URL(
+          "../supabase/migrations/20261008000001_optional_chief_password_change.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
+  } finally {
+    connection.release();
+  }
+  const [after] = await sql`SELECT * FROM dtr_private.chief_secret WHERE singleton`;
+  assert.deepEqual(after, { ...before, must_change: false });
+  const [column] =
+    await sql`SELECT column_default FROM information_schema.columns WHERE table_schema='dtr_private' AND table_name='chief_secret' AND column_name='must_change'`;
+  assert.equal(column.column_default, "false");
+  assert.ok((await prepare("edit_dtr", payload())).requestId);
+  assert.ok(
+    (await prepare("delete_account", { targetUserId: trainee.id, confirmation: trainee.id }))
+      .requestId,
+  );
+  // The next tests exercise actual approval, wrong passwords, and deletion protection
+  // using these unchanged initial credentials before any password rotation.
+});
 
 test("private secrets, audit writes, old deletion RPC and browser approval calls are inaccessible", async () => {
   for (const c of [local.client(), trainee.client, admin.client]) {
@@ -238,6 +270,85 @@ test("password rotation invalidates old password and pending requests; recovery 
     assert.ok(!JSON.stringify(audits).includes(secret));
   currentRecovery = recovered.recoveryCode;
 });
+test("previous 48-character hexadecimal recovery codes still work exactly as issued", async () => {
+  const legacy = (randomUUID() + randomUUID()).replaceAll("-", "").slice(0, 48);
+  await sql`UPDATE dtr_private.chief_secret SET recovery_hash=extensions.crypt(${legacy},extensions.gen_salt('bf',4)) WHERE singleton`;
+  const request = await prepare("recover_ssp", {});
+  const next = `LegacyRecovered!${randomUUID()}`;
+  assert.match(
+    (await approve(request.requestId, legacy.toUpperCase(), admin.id, next)).error,
+    /not accepted/,
+  );
+  const result = await approve(request.requestId, legacy, admin.id, next);
+  assert.equal(result.ok, true, result.error);
+  assert.match(result.recoveryCode, /^[A-HJKMNP-Z]{4}-[A-HJKMNP-Z]{4}-[A-HJKMNP-Z]{4}$/);
+  currentPassword = next;
+  currentRecovery = result.recoveryCode;
+});
+
+test("short recovery codes accept case and separators, rotate once, and never normalize passwords", async () => {
+  const pattern = /^[A-HJKMNP-Z]{4}-[A-HJKMNP-Z]{4}-[A-HJKMNP-Z]{4}$/;
+  assert.match(currentRecovery, pattern);
+  for (const transform of [
+    (code) => code.toLowerCase(),
+    (code) => code.replaceAll("-", ""),
+    (code) => ` ${code.toLowerCase().replaceAll("-", " ")} `,
+  ]) {
+    const previous = currentRecovery;
+    const request = await prepare("recover_ssp", {});
+    const next = `Recovered!${randomUUID()}`;
+    const result = await approve(request.requestId, transform(previous), admin.id, next);
+    assert.equal(result.ok, true, result.error);
+    assert.match(result.recoveryCode, pattern);
+    assert.notEqual(result.recoveryCode, previous);
+    assert.equal(
+      (await approve(request.requestId, transform(previous), admin.id, next)).recoveryCode,
+      undefined,
+    );
+    const replay = await prepare("recover_ssp", {});
+    assert.match(
+      (await approve(replay.requestId, previous, admin.id, `Another!${randomUUID()}`)).error,
+      /not accepted/,
+    );
+    currentPassword = next;
+    currentRecovery = result.recoveryCode;
+  }
+  const request = await prepare("change_ssp", {});
+  assert.match(
+    (
+      await approve(
+        request.requestId,
+        currentPassword.toLowerCase(),
+        admin.id,
+        `Other!${randomUUID()}`,
+      )
+    ).error,
+    /not accepted/,
+  );
+  const [{ result }] =
+    await sql`SELECT dtr_private.normalize_chief_recovery_code('abcdef0123456789abcdef0123456789abcdef0123456789') AS result`;
+  assert.equal(result, "abcdef0123456789abcdef0123456789abcdef0123456789");
+  const [{ normalized }] =
+    await sql`SELECT dtr_private.normalize_chief_recovery_code('abcd-efgh-jkmn') AS normalized`;
+  assert.equal(normalized, "ABCDEFGHJKMN");
+});
+
+test("new recovery generator is private and malformed or incorrect short codes are throttled", async () => {
+  const [{ allowed }] =
+    await sql`SELECT has_function_privilege('service_role','dtr_private.generate_chief_recovery_code()','execute') AS allowed`;
+  assert.equal(allowed, false);
+  await sql`UPDATE dtr_private.chief_attempts SET failures=0,blocked_until=NULL WHERE actor_id=${admin.id}`;
+  const request = await prepare("recover_ssp", {});
+  for (const bad of ["ABC", "ABCD-EFGH-IJKL", "ABCD_EFGH_JKMN", "A".repeat(73), "ZZZZ-ZZZZ-ZZZZ"]) {
+    assert.ok((await approve(request.requestId, bad, admin.id, `Recover!${randomUUID()}`)).error);
+  }
+  assert.match(
+    (await approve(request.requestId, currentRecovery, admin.id, `Recover!${randomUUID()}`)).error,
+    /15 minutes/,
+  );
+  await sql`UPDATE dtr_private.chief_attempts SET blocked_until=clock_timestamp()-interval '1 second' WHERE actor_id=${admin.id}`;
+});
+
 test("revoked admin cannot approve an already prepared request", async () => {
   const r = await prepare("change_ssp", {});
   checked(await local.admin.from("profiles").update({ is_active: false }).eq("id", admin.id));

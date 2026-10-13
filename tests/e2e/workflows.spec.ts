@@ -156,16 +156,18 @@ test("attendance persists, failed writes stay unsaved, undo is unavailable, admi
   await expect(page.getByLabel("Required OJT hours", { exact: true })).toHaveValue("8");
   await page.getByLabel("Required OJT hours", { exact: true }).fill("500");
   await page.getByRole("button", { name: "Save trainee profile", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("saved");
+  await expect(
+    page.getByRole("status").filter({ hasText: "Trainee profile saved." }),
+  ).toBeVisible();
   await expect(page.getByLabel("OJT Title", { exact: true })).toHaveValue("Updated Browser Intern");
   await expect(page.getByLabel("Required OJT hours", { exact: true })).toHaveValue("500");
   await expect(page.getByText("Active", { exact: true })).toBeVisible();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: "Deactivate account", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("deactivated");
+  await expect(page.getByRole("status").filter({ hasText: "deactivated" })).toBeVisible();
   await expect(page.getByText("Inactive", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Reactivate account", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("reactivated");
+  await expect(page.getByRole("status").filter({ hasText: "reactivated" })).toBeVisible();
   await expect(page.getByText("Active", { exact: true })).toBeVisible();
   const clear = page.getByTitle("Clear Check Out").filter({ visible: true });
   await expect(clear).toBeVisible();
@@ -204,7 +206,7 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
   await page.getByLabel("Confirm new account password", { exact: true }).fill(createdPassword);
   await page.getByLabel("New trainee required OJT hours", { exact: true }).fill("486");
   await page.getByRole("button", { name: "Create account", exact: true }).click();
-  await expect(page.getByRole("status")).toContainText("Account created");
+  await expect(page.getByRole("status").filter({ hasText: "Account created" })).toBeVisible();
   const { users } = checked(await local.admin.auth.admin.listUsers({ perPage: 1000 }));
   createdUserId = users.find((user) => user.email === createdEmail)?.id;
   expect(createdUserId).toBeTruthy();
@@ -593,13 +595,14 @@ test("legacy incomplete profiles can be completed without losing DTR access", as
     await page.getByLabel("Password", { exact: true }).fill(legacyPassword);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeVisible();
-    await expect(page.getByRole("status")).toContainText("Student ID");
+    const incompleteProfile = page.getByRole("status").filter({ hasText: "Student ID" });
+    await expect(incompleteProfile).toBeVisible();
     await page.getByLabel("Student ID", { exact: true }).fill("LEGACY-001");
     await page.getByLabel("Host Company", { exact: true }).fill("PSA (legacy test)");
     await page.getByLabel("OJT Title", { exact: true }).fill("Legacy Data Intern");
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByRole("button", { name: "Save", exact: true })).toHaveCount(0);
-    await expect(page.getByRole("status")).toHaveCount(0);
+    await expect(incompleteProfile).toHaveCount(0);
     await page.getByLabel("Required OJT hours", { exact: true }).fill("486");
     await page.getByRole("button", { name: "Save target", exact: true }).click();
     await expect(page.getByRole("button", { name: "Save target", exact: true })).toHaveCount(0);

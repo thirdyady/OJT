@@ -166,7 +166,7 @@ test("trusted endpoint rejects invalid input, role injection and inactive admini
           Authorization: `Bearer ${session!.access_token}`,
           "content-type": "application/json",
           "x-tsr-serverFn": "true",
-          Origin: "http://localhost:3000",
+          Origin: new URL(page.url()).origin,
         },
         data: body,
       });
@@ -179,7 +179,7 @@ test("trusted endpoint rejects invalid input, role injection and inactive admini
         Authorization: `Bearer ${session!.access_token}`,
         "content-type": "application/json",
         "x-tsr-serverFn": "true",
-        Origin: "http://localhost:3000",
+        Origin: new URL(page.url()).origin,
       },
       data: body,
     });

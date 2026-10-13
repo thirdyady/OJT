@@ -88,6 +88,9 @@ test("rapid clicks save once, the full sequence works, and self-service undo is 
 }) => {
   await login(page, trainee);
   const checkIn = page.getByRole("button", { name: "Check In now", exact: true });
+  const steps = page.getByRole("list", { name: "Attendance steps" });
+  await expect(steps.getByRole("listitem")).toHaveCount(4);
+  await expect(steps.locator('[aria-current="step"]')).toContainText("Check In");
   let writes = 0;
   page.on("request", (request) => {
     if (request.url().includes("/rest/v1/rpc/dtr_punch") && request.method() === "POST") writes++;
@@ -96,6 +99,19 @@ test("rapid clicks save once, the full sequence works, and self-service undo is 
   await checkIn.dblclick();
   await expect(page.getByRole("button", { name: "Break Out now", exact: true })).toBeVisible();
   expect(writes).toBe(1);
+  await expect(steps.getByRole("listitem").first()).toContainText("Recorded");
+  await expect(steps.locator('[aria-current="step"]')).toContainText("Break Out");
+  await page
+    .getByRole("region", { name: "Today's attendance", exact: true })
+    .screenshot({ path: test.info().outputPath("attendance-timeline-desktop.png") });
+  await page.setViewportSize({ width: 375, height: 812 });
+  await page
+    .getByRole("region", { name: "Today's attendance", exact: true })
+    .screenshot({ path: test.info().outputPath("attendance-timeline-mobile.png") });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.setViewportSize({ width: 1280, height: 900 });
   await expect(page.getByRole("status").filter({ hasText: "Day in progress" })).toContainText(
     "next step: Break Out",
   );
@@ -109,6 +125,8 @@ test("rapid clicks save once, the full sequence works, and self-service undo is 
   }
   await page.getByRole("button", { name: "Check Out now", exact: true }).click();
   await expect(page.getByText(/Day complete/)).toBeVisible();
+  await expect(steps.locator('[aria-current="step"]')).toHaveCount(0);
+  await expect(steps.getByText("Recorded", { exact: true })).toHaveCount(4);
 
   await expect(page.getByRole("button", { name: /Undo last/i })).toHaveCount(0);
   await page.reload();
