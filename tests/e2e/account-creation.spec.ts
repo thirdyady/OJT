@@ -41,7 +41,7 @@ test.afterAll(async () => {
 async function prepare(page: Page, type = "ojt") {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(adminEmail);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(adminEmail);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const form = page.locator("[data-admin-create-account-endpoint]");
@@ -99,6 +99,13 @@ for (const type of ["ojt", "job_order", "processing", "regular_employee"]) {
     expect(row.required_ojt_hours).toBe(type === "ojt" ? 486 : null);
     expect(row.required_workdays).toBe(type === "processing" ? 90 : null);
     expect(row.is_admin).toBe(false);
+    if (type === "processing") {
+      const contracts = page.getByRole("region", { name: "Processing contracts", exact: true });
+      await expect(contracts).toContainText("0 / 90 completed workdays");
+      await expect(
+        contracts.getByRole("button", { name: "Renew contract", exact: true }),
+      ).toBeEnabled();
+    }
   });
 }
 

@@ -30,6 +30,14 @@ test.beforeAll(async () => {
       }),
     );
     users.push({ id: user.id, email, type, name });
+    // Historical fixtures model a placement that began before these records.
+    if (type === "processing")
+      checked(
+        await local.admin
+          .from("processing_contracts")
+          .update({ start_date: "2000-01-01" })
+          .eq("user_id", user.id),
+      );
     if (type === "admin")
       checked(await local.admin.from("profiles").update({ is_admin: true }).eq("id", user.id));
     else
@@ -55,11 +63,104 @@ test.afterAll(async () => {
 async function login(page: Page, user: (typeof users)[number]) {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(user.email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
 }
+for (const type of [...types, "admin"])
+  test(`${type}: signed-in password change returns to dashboard without signing out`, async ({
+    page,
+  }) => {
+    await login(
+      page,
+      users.find((u) => u.type === type)!,
+    );
+    await page.goto("/reset-password");
+    const back = page.getByRole("link", { name: "Back to dashboard", exact: true });
+    await expect(back).toHaveAttribute("href", "/dashboard");
+    await expect(page.getByRole("link", { name: "Back to sign in", exact: true })).toHaveCount(0);
+    await back.click();
+    await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+  });
+
+test("admin profile cards and OJT editing heading have clear desktop and mobile separation", async ({
+  page,
+}) => {
+  await login(
+    page,
+    users.find((u) => u.type === "admin")!,
+  );
+  await page
+    .getByRole("button", { name: new RegExp(users.find((u) => u.type === "ojt")!.name) })
+    .click();
+  for (const width of [1280, 375]) {
+    await page.setViewportSize({ width, height: 900 });
+    const profile = page.getByRole("region", { name: "Account profile", exact: true });
+    const progress = page.getByRole("region", { name: "OJT/Immersions progress", exact: true });
+    const heading = page.getByRole("heading", { name: "Trainee profile", exact: true });
+    await expect(heading).toBeVisible();
+    await expect(progress).toBeVisible();
+    const a = (await profile.boundingBox())!,
+      b = (await progress.boundingBox())!,
+      c = (await heading.boundingBox())!;
+    expect(b.y - (a.y + a.height)).toBeGreaterThanOrEqual(15);
+    expect(c.y - (b.y + b.height)).toBeGreaterThanOrEqual(15);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await heading.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath(`profile-spacing-${width}.png`) });
+  }
+});
+
+test("pending signup is absent from accounts and reports, then appears after confirmation", async ({
+  page,
+}) => {
+  const name = `Pending signup ${randomUUID()}`;
+  const client = local.client();
+  let id: string | undefined;
+  try {
+    const signup = checked(
+      await client.auth.signUp({
+        email: `${randomUUID()}@ojt.local.test`,
+        password,
+        options: {
+          data: {
+            full_name: name,
+            student_id: "TEST",
+            company: "PSA",
+            ojt_title: "Intern",
+            account_type: "ojt",
+          },
+        },
+      }),
+    );
+    id = signup.user.id;
+    expect(signup.session).toBeNull();
+    await login(
+      page,
+      users.find((u) => u.type === "admin")!,
+    );
+    await expect(page.getByRole("button", { name: new RegExp(users[0].name) })).toBeVisible();
+    await expect(page.getByRole("button", { name: new RegExp(name) })).toHaveCount(0);
+    await page.getByRole("tab", { name: "Reports", exact: true }).click();
+    await page.getByRole("button", { name: "Generate report", exact: true }).click();
+    const results = page.getByRole("region", { name: "Report results", exact: true });
+    await expect(results).toBeVisible();
+    await expect(results).not.toContainText(name);
+    checked(await local.admin.auth.admin.updateUserById(id!, { email_confirm: true }));
+    await page.reload();
+    await expect(page.getByRole("button", { name: new RegExp(name) })).toBeVisible();
+    await page.getByRole("tab", { name: "Reports", exact: true }).click();
+    await page.getByRole("button", { name: "Generate report", exact: true }).click();
+    await expect(results).toContainText(name);
+  } finally {
+    await client.auth.signOut();
+    if (id) checked(await local.admin.auth.admin.deleteUser(id));
+  }
+});
+
 for (const type of types)
   test(`${type} sees only its own profile and appropriate progress; RLS rejects other accounts`, async ({
     page,
@@ -71,7 +172,7 @@ for (const type of types)
     await expect(page.getByRole("heading", { name: "Manage Accounts" })).toHaveCount(0);
     await expect(page.getByText(other.name, { exact: true })).toHaveCount(0);
     if (type === "ojt" || type === "processing") {
-      const label = type === "ojt" ? "OJT" : "Processing";
+      const label = type === "ojt" ? "OJT/Immersions" : "Field Enumerator / Office processor";
       await expect(page.getByRole("progressbar", { name: `${label} completion` })).toHaveAttribute(
         "aria-valuenow",
         type === "ojt" ? "50" : "25",
@@ -143,7 +244,10 @@ for (const type of ["ojt", "processing"])
     try {
       await login(page, user);
       const card = page.getByRole("region", {
-        name: type === "ojt" ? "OJT progress" : "Processing progress",
+        name:
+          type === "ojt"
+            ? "OJT/Immersions progress"
+            : "Field Enumerator / Office processor progress",
         exact: true,
       });
       await expect(card.getByRole("list", { name: "Progress milestones" })).toBeVisible();

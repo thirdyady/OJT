@@ -40,7 +40,7 @@ test.afterEach(async () => {
 async function login(page: Page) {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(users[0].email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(users[0].email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("button", { name: new RegExp(users[1].name) }).click();
