@@ -1,3 +1,5 @@
+import { TravelOut, TravelDetails } from "@/components/travel-out";
+import { SecurityMonitor } from "@/components/security-monitor";
 import { AdminReports } from "@/components/admin-reports";
 import { AdminWorkspace } from "@/components/admin-workspace";
 import { AttendanceCalendar } from "@/components/attendance-calendar";
@@ -12,7 +14,13 @@ import {
   type EditableDtr,
 } from "@/components/chief-approval";
 import type { ChiefRequest } from "@/lib/chief-input";
-import { accountLabels, accountProgress } from "@/lib/account-progress.mjs";
+import {
+  accountLabels,
+  accountProgress,
+  currentProcessingContract,
+  type ProcessingContract,
+} from "@/lib/account-progress.mjs";
+import { ProcessingContracts } from "@/components/processing-contracts";
 import { AccountProfileSummary, AccountProgressSummary } from "@/components/account-summary";
 import type { Enums } from "@/integrations/supabase/types";
 import { CreateAccountForm } from "@/components/create-account-form";
@@ -56,6 +64,9 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 type Punch = "check_in" | "break_out" | "break_in" | "check_out";
 
 type DtrRow = {
+  travel_hours?: number | null;
+  travel_place?: string | null;
+  travel_reason?: string | null;
   id?: string;
   user_id?: string;
   entry_date: string;
@@ -66,6 +77,7 @@ type DtrRow = {
 };
 
 type DtrReportProfile = {
+  processingContracts?: ProcessingContract[];
   fullName: string;
   ojtTitle: string | null;
   accountType: Enums<"account_type">;
@@ -74,6 +86,7 @@ type DtrReportProfile = {
 };
 
 type Profile = {
+  processing_contracts?: ProcessingContract[];
   account_type: Enums<"account_type">;
   required_workdays: number | null;
   updated_at: string;
@@ -87,6 +100,7 @@ type Profile = {
 };
 
 type TraineeRow = {
+  processing_contracts?: ProcessingContract[];
   account_type: Enums<"account_type">;
   required_workdays: number | null;
   updated_at: string;
@@ -295,8 +309,11 @@ function buildDtrHtmlFor(
         account_type: profile.accountType,
         required_ojt_hours: profile.requiredOjtHours,
         required_workdays: profile.requiredWorkdays,
+        processing_contracts: profile.processingContracts,
       },
       visibleRows,
+      `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-01`,
+      `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${new Date(targetYear, targetMonth + 1, 0).getDate()}`,
     ),
   );
   const byDay: Record<number, DtrRow> = {};
@@ -327,7 +344,7 @@ function buildDtrHtmlFor(
         <td style="font-size:7.5px;text-align:center;padding:0 1px;">${amIn}</td>
         <td style="font-size:7.5px;text-align:center;padding:0 1px;">${amOut}</td>
         <td style="font-size:7.5px;text-align:center;padding:0 1px;">${pmIn}</td>
-        <td style="font-size:7.5px;text-align:center;padding:0 1px;">${pmOut}</td>
+        <td style="font-size:7.5px;text-align:center;padding:0 1px;">${pmOut}</td><td style="font-size:7.5px;text-align:center;">${row?.travel_hours != null && ["job_order", "regular_employee"].includes(profile.accountType) ? "Travel" : ""}</td>
       </tr>
     `);
   }
@@ -349,6 +366,7 @@ function buildDtrHtmlFor(
             <th rowspan="2" style="width:20px;">Day</th>
             <th colspan="2">AM</th>
             <th colspan="2">PM</th>
+            <th rowspan="2" style="width:19%;">Remarks</th>
           </tr>
           <tr>
             <th>Time In</th><th>Time Out</th>
@@ -462,8 +480,11 @@ function downloadWordDtrFor(
         account_type: profile.accountType,
         required_ojt_hours: profile.requiredOjtHours,
         required_workdays: profile.requiredWorkdays,
+        processing_contracts: profile.processingContracts,
       },
       visibleRows,
+      `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-01`,
+      `${targetYear}-${String(targetMonth + 1).padStart(2, "0")}-${new Date(targetYear, targetMonth + 1, 0).getDate()}`,
     ),
   );
   const monthLabel = `${MONTHS[targetMonth]} ${targetYear}`;
@@ -503,6 +524,7 @@ function downloadWordDtrFor(
       ${cell(a2)}
       ${cell(p1)}
       ${cell(p2)}
+      ${cell(row?.travel_hours != null && ["job_order", "regular_employee"].includes(profile.accountType) ? "Travel" : "")}
     </tr>`;
   }
 
@@ -510,14 +532,15 @@ function downloadWordDtrFor(
 <table style="width:100%;border-collapse:collapse;table-layout:fixed;font-family:Arial,sans-serif;">
 <colgroup>
   <col style="width:13%;"/>
-  <col style="width:21.75%;"/>
-  <col style="width:21.75%;"/>
-  <col style="width:21.75%;"/>
-  <col style="width:21.75%;"/>
+  <col style="width:17%;"/>
+  <col style="width:17%;"/>
+  <col style="width:17%;"/>
+  <col style="width:17%;"/>
+<col style="width:19%;"/>
 </colgroup>
-<tr><td colspan="5" style="text-align:center;font-size:6pt;font-weight:bold;letter-spacing:0.4pt;color:#172554;padding-bottom:4px;">PHILIPPINE STATISTICS AUTHORITY</td></tr>
+<tr><td colspan="6" style="text-align:center;font-size:6pt;font-weight:bold;letter-spacing:0.4pt;color:#172554;padding-bottom:4px;">PHILIPPINE STATISTICS AUTHORITY</td></tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     border-top:2.5pt double #000;
     border-bottom:2.5pt double #000;
     border-left:none;border-right:none;
@@ -530,7 +553,7 @@ function downloadWordDtrFor(
   ">DAILY TIME RECORD</td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     text-align:center;
     font-size:10pt;
     font-weight:bold;
@@ -541,7 +564,7 @@ function downloadWordDtrFor(
   ">${escapeHtml(fullName)}</td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     text-align:center;
     font-size:8pt;
     border:none;
@@ -550,7 +573,7 @@ function downloadWordDtrFor(
   ">${profile.accountType === "ojt" ? "OJT Title" : "Position"}: <strong>${escapeHtml(ojtTitle)}</strong></td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     font-size:8pt;
     border:none;
     padding:3px 0 4px;
@@ -582,6 +605,7 @@ function downloadWordDtrFor(
     vertical-align:middle;
     padding:2px;
   ">PM</td>
+  <td rowspan="2" style="border:1px solid #000;font-size:7pt;text-align:center;font-weight:bold;">Remarks</td>
 </tr>
 <tr>
   ${hdrCell("Time In")}
@@ -591,7 +615,7 @@ function downloadWordDtrFor(
 </tr>
 ${rows31}
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     font-size:7.5pt;
     text-align:right;
     border:none;
@@ -600,7 +624,7 @@ ${rows31}
   ">Monthly total: <strong>${totalHours.toFixed(2)} hrs</strong>${reportSummary ? `<br/>${reportSummary}` : ""}</td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     font-size:6.5pt;
     text-align:center;
     vertical-align:middle;
@@ -615,7 +639,7 @@ ${rows31}
   </td>
 </tr>
 <tr>
-  <td colspan="5" style="border:none;padding:20px 0 0;text-align:center;">
+  <td colspan="6" style="border:none;padding:20px 0 0;text-align:center;">
     <table style="width:80%;margin:0 auto;border-collapse:collapse;">
       <tr>
         <td style="border-top:1px solid #000;text-align:center;font-size:9.5pt;font-weight:bold;padding:4px 0 2px;font-family:Arial,sans-serif;">
@@ -626,7 +650,7 @@ ${rows31}
   </td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     border:none;
     font-size:7.5pt;
     padding:6px 0 16px;
@@ -635,7 +659,7 @@ ${rows31}
   ">Verified as to the prescribed office hours.</td>
 </tr>
 <tr>
-  <td colspan="5" style="
+  <td colspan="6" style="
     border:none;
     text-align:center;
     font-size:9.5pt;
@@ -645,7 +669,7 @@ ${rows31}
   ">JOSE B. TUASON JR.</td>
 </tr>
 <tr>
-  <td colspan="5" style="border:none;padding:0;text-align:center;">
+  <td colspan="6" style="border:none;padding:0;text-align:center;">
     <table style="width:80%;margin:0 auto;border-collapse:collapse;">
       <tr>
         <td style="border-top:2pt solid #000;text-align:center;font-size:8.5pt;font-weight:bold;padding:4px 0 2px;font-family:Arial,sans-serif;">
@@ -735,6 +759,15 @@ function buildDtrCsv(rows: DtrRow[], targetMonth: number, targetYear: number): s
 
 // ── Main Dashboard ─────────────────────────────────────────────────────────────
 function DashboardPage() {
+  const { user } = Route.useRouteContext();
+  return user.app_metadata?.dtr_access_role === "security_monitor" ? (
+    <SecurityMonitor />
+  ) : (
+    <EmployeeDashboard />
+  );
+}
+
+function EmployeeDashboard() {
   const navigate = useNavigate();
   const [userId, setUserId] = useState<string | null>(null);
   const [email, setEmail] = useState<string>("");
@@ -805,7 +838,11 @@ function DashboardPage() {
         setEmail(u.user.email ?? "");
 
         const [profileResult, entriesResult] = await Promise.all([
-          supabase.from("profiles").select("*").eq("id", u.user.id).maybeSingle(),
+          supabase
+            .from("profiles")
+            .select("*, processing_contracts(*)")
+            .eq("id", u.user.id)
+            .maybeSingle(),
           loadDtrRows(u.user.id),
         ]);
 
@@ -853,6 +890,7 @@ function DashboardPage() {
   // Strict, manual order — no auto "skip ahead" logic. Whatever hasn't been
   // punched yet, in order, is next.
   const nextPunch: Punch | null = useMemo(() => {
+    if (today.travel_hours != null) return null;
     for (const p of ORDER) {
       if (!today[p]) return p;
     }
@@ -1064,6 +1102,7 @@ function DashboardPage() {
         accountType: profile.account_type,
         requiredOjtHours: profile.required_ojt_hours,
         requiredWorkdays: profile.required_workdays,
+        processingContracts: profile.processing_contracts,
       },
       rows,
       downloadMonth,
@@ -1080,6 +1119,7 @@ function DashboardPage() {
         accountType: profile.account_type,
         requiredOjtHours: profile.required_ojt_hours,
         requiredWorkdays: profile.required_workdays,
+        processingContracts: profile.processing_contracts,
       },
       rows,
       downloadMonth,
@@ -1236,7 +1276,7 @@ function DashboardPage() {
               <AccountProfileSummary profile={profile} />
             ) : (
               <>
-                <p className="text-sm">Account type: OJT</p>
+                <p className="text-sm">Account type: {accountLabels.ojt}</p>
                 {/* Profile */}
                 <section className="rounded-2xl border border-slate-200 bg-white shadow-sm p-4 sm:p-5">
                   <div className="mb-3 flex items-center justify-between">
@@ -1375,6 +1415,10 @@ function DashboardPage() {
               checkoutMessage={checkoutMessage}
             />
 
+            {profile.account_type === "processing" && (
+              <ProcessingContracts contracts={profile.processing_contracts ?? []} records={rows} />
+            )}
+
             {/* Punch card */}
             <section
               aria-label="Today's attendance"
@@ -1387,61 +1431,64 @@ function DashboardPage() {
                 </h2>
               </div>
 
-              <ol aria-label="Attendance steps" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {ORDER.map((p, index) => {
-                  const done = Boolean(today[p]);
-                  const isNext = nextPunch === p;
-                  return (
-                    <li
-                      key={p}
-                      aria-current={isNext ? "step" : undefined}
-                      className={`relative rounded-xl border p-3 sm:p-4 ${
-                        done
-                          ? "border-emerald-200 bg-emerald-50"
-                          : isNext
-                            ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
-                            : "border-slate-200 bg-slate-50"
-                      }`}
-                    >
-                      {index < 3 && (
-                        <span
-                          aria-hidden="true"
-                          className={`absolute -right-3 top-7 z-10 hidden h-0.5 w-3 sm:block ${done ? "bg-emerald-300" : "bg-slate-200"}`}
-                        />
-                      )}
-                      <div className="mb-3 flex items-center justify-between gap-1">
-                        <span
-                          className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${done ? "bg-emerald-700 text-white" : isNext ? "bg-blue-900 text-white" : "bg-slate-200 text-slate-600"}`}
-                          aria-hidden="true"
-                        >
-                          {done ? (
-                            <Check
-                              className={
-                                p === "check_out" && checkoutCelebration
-                                  ? "checkout-tick h-4 w-4"
-                                  : "h-4 w-4"
-                              }
-                            />
-                          ) : (
-                            index + 1
-                          )}
-                        </span>
-                        <span
-                          className={`text-[10px] font-semibold ${done ? "text-emerald-800" : isNext ? "text-blue-900" : "text-slate-500"}`}
-                        >
-                          {done ? "Recorded" : isNext ? "Up next" : "Pending"}
-                        </span>
-                      </div>
-                      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500 sm:text-xs">
-                        {LABELS[p]}
-                      </div>
-                      <div className="mt-1 font-mono text-base font-semibold text-slate-900 sm:text-lg">
-                        {fmtTime(today[p])}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ol>
+              <TravelDetails row={today} />
+              {today.travel_hours == null && (
+                <ol aria-label="Attendance steps" className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {ORDER.map((p, index) => {
+                    const done = Boolean(today[p]);
+                    const isNext = nextPunch === p;
+                    return (
+                      <li
+                        key={p}
+                        aria-current={isNext ? "step" : undefined}
+                        className={`relative rounded-xl border p-3 sm:p-4 ${
+                          done
+                            ? "border-emerald-200 bg-emerald-50"
+                            : isNext
+                              ? "border-blue-300 bg-blue-50 ring-1 ring-blue-200"
+                              : "border-slate-200 bg-slate-50"
+                        }`}
+                      >
+                        {index < 3 && (
+                          <span
+                            aria-hidden="true"
+                            className={`absolute -right-3 top-7 z-10 hidden h-0.5 w-3 sm:block ${done ? "bg-emerald-300" : "bg-slate-200"}`}
+                          />
+                        )}
+                        <div className="mb-3 flex items-center justify-between gap-1">
+                          <span
+                            className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-semibold ${done ? "bg-emerald-700 text-white" : isNext ? "bg-blue-900 text-white" : "bg-slate-200 text-slate-600"}`}
+                            aria-hidden="true"
+                          >
+                            {done ? (
+                              <Check
+                                className={
+                                  p === "check_out" && checkoutCelebration
+                                    ? "checkout-tick h-4 w-4"
+                                    : "h-4 w-4"
+                                }
+                              />
+                            ) : (
+                              index + 1
+                            )}
+                          </span>
+                          <span
+                            className={`text-[10px] font-semibold ${done ? "text-emerald-800" : isNext ? "text-blue-900" : "text-slate-500"}`}
+                          >
+                            {done ? "Recorded" : isNext ? "Up next" : "Pending"}
+                          </span>
+                        </div>
+                        <div className="text-[11px] font-medium uppercase tracking-wide text-slate-500 sm:text-xs">
+                          {LABELS[p]}
+                        </div>
+                        <div className="mt-1 font-mono text-base font-semibold text-slate-900 sm:text-lg">
+                          {fmtTime(today[p])}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ol>
+              )}
 
               {todayWarning ? (
                 <p
@@ -1479,16 +1526,29 @@ function DashboardPage() {
                     Day complete · {checkoutMessage || `${computeHours(today).toFixed(2)} hrs`}
                   </div>
                 )}
-                <span className="text-xs text-slate-500" aria-live="polite">
-                  Tap each button yourself — Break Out, Break In, and Check Out are no longer logged
-                  automatically.
-                </span>
+                {today.travel_hours == null && (
+                  <span className="text-xs text-slate-500" aria-live="polite">
+                    Tap each button yourself — Break Out, Break In, and Check Out are no longer
+                    logged automatically.
+                  </span>
+                )}
                 {savingAttendance && (
                   <span role="status" aria-live="polite" className="text-xs text-slate-500">
                     Saving attendance…
                   </span>
                 )}
               </div>
+              {(profile.account_type === "job_order" ||
+                profile.account_type === "regular_employee") && (
+                <TravelOut
+                  date={key}
+                  disabled={savingAttendance || Boolean(today.id)}
+                  onBusy={setSavingAttendance}
+                  onSaved={async () => {
+                    if (userId) setRows(await loadDtrRows(userId));
+                  }}
+                />
+              )}
             </section>
 
             {/* DTR table */}
@@ -1571,6 +1631,7 @@ function DashboardPage() {
                       <div className="mb-2 flex items-center justify-between">
                         <span className="text-sm font-medium text-slate-900">
                           {fmtDate(r.entry_date)}
+                          <TravelDetails row={r} />
                         </span>
                         <span className="font-mono text-xs text-slate-500">
                           {h ? `${h.toFixed(2)} hrs` : "—"}
@@ -1629,6 +1690,7 @@ function DashboardPage() {
                         <tr key={r.entry_date} className="text-slate-700">
                           <td className="px-5 py-3 font-medium text-slate-900">
                             {fmtDate(r.entry_date)}
+                            <TravelDetails row={r} />
                           </td>
                           <td className="px-5 py-3 font-mono">{fmtTime(r.check_in)}</td>
                           <td className="px-5 py-3 font-mono">{fmtTime(r.break_out)}</td>
@@ -1986,6 +2048,7 @@ function AdminDashboard() {
         accountType: selectedTrainee.account_type,
         requiredOjtHours: selectedTrainee.required_ojt_hours,
         requiredWorkdays: selectedTrainee.required_workdays,
+        processingContracts: selectedTrainee.processing_contracts,
       },
       entries,
       docMonth,
@@ -2002,6 +2065,7 @@ function AdminDashboard() {
         accountType: selectedTrainee.account_type,
         requiredOjtHours: selectedTrainee.required_ojt_hours,
         requiredWorkdays: selectedTrainee.required_workdays,
+        processingContracts: selectedTrainee.processing_contracts,
       },
       entries,
       docMonth,
@@ -2094,6 +2158,10 @@ function AdminDashboard() {
         <DtrEditor
           key={editor.userId}
           userId={editor.userId}
+          allowTravel={
+            selectedTrainee?.account_type === "job_order" ||
+            selectedTrainee?.account_type === "regular_employee"
+          }
           rows={entries}
           initial={editor.initial}
           onClose={() => setEditor(null)}
@@ -2233,7 +2301,7 @@ function AdminDashboard() {
                           ? "OJT target not set"
                           : `Target: ${t.required_ojt_hours} hrs`
                         : t.account_type === "processing"
-                          ? `Required workdays: ${t.required_workdays ?? "Not configured"}`
+                          ? `Required workdays: ${currentProcessingContract(t.processing_contracts ?? [])?.required_workdays ?? "Not configured"}`
                           : accountLabels[t.account_type]}
                     </div>
                     <div
@@ -2283,14 +2351,25 @@ function AdminDashboard() {
                 </p>
               )}
               {selectedTrainee && (
-                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                <div className="mt-4 space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:p-4">
                   <AccountProfileSummary profile={selectedTrainee} />
                   {!loadingEntries && !entriesError && (
                     <AccountProgressSummary profile={selectedTrainee} records={entries} />
                   )}
+                  {selectedTrainee.account_type === "processing" &&
+                    !loadingEntries &&
+                    !entriesError && (
+                      <ProcessingContracts
+                        key={selectedTrainee.id}
+                        userId={selectedTrainee.id}
+                        contracts={selectedTrainee.processing_contracts ?? []}
+                        records={entries}
+                        onSaved={async () => setTrainees(await loadProfiles())}
+                      />
+                    )}
                   {selectedTrainee.account_type === "ojt" && (
                     <>
-                      <div className="mb-3">
+                      <div className="border-t border-slate-200 pt-4">
                         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                           Trainee profile
                         </h3>
@@ -2565,6 +2644,7 @@ function AdminDashboard() {
                     <div className="mb-2 flex items-center justify-between">
                       <span className="text-sm font-medium text-slate-900">
                         {fmtDate(r.entry_date)}
+                        <TravelDetails row={r} />
                       </span>
                       <div className="flex items-center gap-3">
                         <span className="font-mono text-xs text-slate-500">
@@ -2620,6 +2700,7 @@ function AdminDashboard() {
                       <tr key={r.id} className="text-slate-700">
                         <td className="px-5 py-3 font-medium text-slate-900">
                           {fmtDate(r.entry_date)}
+                          <TravelDetails row={r} />
                         </td>
                         {ORDER.map((p) => (
                           <td key={p} className="px-5 py-3 font-mono">

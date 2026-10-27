@@ -122,7 +122,10 @@ function AuthPage() {
         setMode("signin");
       } else {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email:
+            email.trim().toLowerCase() === "psasecurity"
+              ? "psasecurity@security.psa-dtr.invalid"
+              : email.trim(),
           password,
         });
         if (error) throw error;
@@ -144,13 +147,7 @@ function AuthPage() {
       <div className="w-full max-w-md">
         <div>
           <div className="mb-6 text-center">
-            <Link
-              to="/"
-              className="rounded text-sm font-medium text-blue-900 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-900"
-            >
-              Back to home
-            </Link>
-            <h1 className="mt-2 text-2xl font-semibold text-slate-900">
+            <h1 className="text-2xl font-semibold text-slate-900">
               {mode === "forgot"
                 ? "Reset your password"
                 : mode === "signin"
@@ -244,14 +241,14 @@ function AuthPage() {
                 )}
               </>
             )}
-            <Field label="Email">
+            <Field label={mode === "signin" ? "Email or username" : "Email"}>
               <input
-                type="email"
+                type={mode === "signin" ? "text" : "email"}
                 required
-                autoComplete="email"
+                autoComplete={mode === "signin" ? "username" : "email"}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
+                placeholder={mode === "signin" ? "Email address or psasecurity" : "you@example.com"}
                 className="input"
               />
             </Field>
@@ -346,6 +343,14 @@ function AuthPage() {
               )}
             </div>
           </form>
+          <div className="mt-5 text-center">
+            <Link
+              to="/"
+              className="rounded text-sm font-medium text-blue-900 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-900"
+            >
+              Back to home
+            </Link>
+          </div>
         </div>
       </div>
 

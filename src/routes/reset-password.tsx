@@ -344,8 +344,11 @@ function ResetPasswordPage() {
                 </button>
               </form>
             )}
-            <Link to="/auth" className="block text-sm underline">
-              Back to sign in
+            <Link
+              to={flow === "change" && ready ? "/dashboard" : "/auth"}
+              className="block text-sm underline"
+            >
+              {flow === "change" && ready ? "Back to dashboard" : "Back to sign in"}
             </Link>
           </>
         )}

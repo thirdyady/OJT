@@ -46,8 +46,8 @@ function LandingPage() {
             Philippine Statistics Authority.
           </p>
           <p className="mt-4 text-sm leading-relaxed text-slate-600">
-            For OJT, Job Order, Processing, and Regular Employee accounts. Sign in with your
-            assigned account to get started.
+            For OJT/Immersions, JO/COS/GIP, Field Enumerator / Office processor, and Regular /
+            Contractual Employees accounts. Sign in with your assigned account to get started.
           </p>
           <Link
             to="/auth"
