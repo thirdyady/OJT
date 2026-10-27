@@ -25,7 +25,7 @@ test.beforeEach(async ({ page }) => {
   checked(await local.admin.from("profiles").update({ is_admin: true }).eq("id", actor.id));
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("tab", { name: "Settings", exact: true }).click();

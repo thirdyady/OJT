@@ -45,7 +45,7 @@ test.afterEach(async () => {
 async function login(page: Page, index = 0) {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(users[index].email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(users[index].email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
@@ -63,10 +63,9 @@ test("all 1001 attendance rows contribute to progress and historical reports", a
   });
   checked(await local.admin.from("dtr_entries").insert(records));
   await login(page);
-  await expect(page.getByRole("progressbar", { name: "OJT completion" })).toHaveAttribute(
-    "aria-valuenow",
-    "80.08",
-  );
+  await expect(
+    page.getByRole("progressbar", { name: "OJT/Immersions completion" }),
+  ).toHaveAttribute("aria-valuenow", "80.08");
   await page.getByLabel("Select month to view/download").selectOption("0");
   await page.getByLabel("Select year to view/download").selectOption("2000");
   const downloadEvent = page.waitForEvent("download");
@@ -184,7 +183,7 @@ test("whitespace-only required signup fields are rejected before contacting Auth
   await page.getByRole("button", { name: "Sign up", exact: true }).click();
   for (const label of ["Full name", "Student ID", "Host company", "Position / Role"])
     await page.getByLabel(label, { exact: true }).fill("   ");
-  await page.getByLabel("Email", { exact: true }).fill(`${randomUUID()}@ojt.local.test`);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(`${randomUUID()}@ojt.local.test`);
   await page.getByLabel("Password", { exact: true }).fill(password);
   let requests = 0;
   page.on("request", (request) => {

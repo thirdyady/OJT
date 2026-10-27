@@ -14,7 +14,7 @@ async function waitForHydration(page: Page) {
 async function login(page: Page, account: { email: string; password: string }) {
   await page.goto("/auth");
   await waitForHydration(page);
-  await page.getByLabel("Email", { exact: true }).fill(account.email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(account.email);
   await page.getByLabel("Password", { exact: true }).fill(account.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
