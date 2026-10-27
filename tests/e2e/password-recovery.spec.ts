@@ -37,7 +37,7 @@ async function forgot(page: Page, email: string) {
   await page.goto("/auth?next=https://unapproved.invalid/&redirect_to=https://unapproved.invalid/");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
   await page.getByRole("button", { name: "Forgot password?", exact: true }).click();
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByRole("button", { name: "Send reset link", exact: true }).click();
   await expect(page.getByRole("status")).toHaveText(RECOVERY_REQUEST_MESSAGE);
 }
@@ -200,7 +200,7 @@ test("cooldown survives reload and applies across tabs and email changes", async
     await route.fulfill({ json: {} });
   });
   await forgot(page, "first@ojt.local.test");
-  await page.getByLabel("Email", { exact: true }).fill("second@ojt.local.test");
+  await page.getByLabel(/^Email(?: or username)?$/).fill("second@ojt.local.test");
   await expect(page.getByRole("button", { name: "Send reset link", exact: true })).toBeDisabled();
   await page.reload();
   await page.locator('body[data-app-hydrated="true"]').waitFor();
@@ -260,7 +260,7 @@ test("an already open dashboard follows recovery started in another tab", async 
   const user = await account();
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(user.email);
   await page.getByLabel("Password", { exact: true }).fill(user.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
@@ -291,7 +291,7 @@ test("normal sign-in cannot substitute for recovery; intentional change-password
   const user = await account("job_order");
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(user.email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(user.email);
   await page.getByLabel("Password", { exact: true }).fill(user.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();

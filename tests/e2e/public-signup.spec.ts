@@ -1,6 +1,26 @@
 ﻿import { test, expect } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { localSupabase, checked } from "../../scripts/local-supabase.mjs";
+
+test("home navigation sits below sign-in, signup and forgot-password forms", async ({ page }) => {
+  for (const mode of ["signin", "signup", "forgot"]) {
+    await page.goto("/auth");
+    await page.locator('body[data-app-hydrated="true"]').waitFor();
+    if (mode !== "signin")
+      await page
+        .getByRole("button", {
+          name: mode === "signup" ? "Sign up" : "Forgot password?",
+          exact: true,
+        })
+        .click();
+    const home = page.getByRole("link", { name: "Back to home", exact: true });
+    const form = (await page.locator("form").boundingBox())!,
+      link = (await home.boundingBox())!;
+    expect(link.y).toBeGreaterThan(form.y + form.height);
+    await home.click();
+    await expect(page).toHaveURL(/\/$/);
+  }
+});
 const local = localSupabase();
 for (const type of ["ojt", "job_order", "processing", "regular_employee"])
   test(`public signup offers and persists ${type}`, async ({ page }) => {
@@ -27,7 +47,7 @@ for (const type of ["ojt", "job_order", "processing", "regular_employee"])
       if (type === "processing")
         await page.getByLabel("Required workdays", { exact: true }).fill("20");
       else await expect(page.getByLabel("Required workdays", { exact: true })).toHaveCount(0);
-      await page.getByLabel("Email", { exact: true }).fill(email);
+      await page.getByLabel(/^Email(?: or username)?$/).fill(email);
       await page.getByLabel("Password", { exact: true }).fill(`Signup!${randomUUID()}`);
       await page.getByRole("button", { name: "Create account", exact: true }).click();
       await expect(page.getByRole("status")).toContainText("Check your email to confirm");
@@ -59,7 +79,7 @@ test("signup requires Processing days and rejects whitespace without sending sig
     .selectOption("processing");
   for (const label of ["Full name", "Office / Department", "Position / Role"])
     await page.getByLabel(label, { exact: true }).fill("   ");
-  await page.getByLabel("Email", { exact: true }).fill("invalid-input@ojt.local.test");
+  await page.getByLabel(/^Email(?: or username)?$/).fill("invalid-input@ojt.local.test");
   await page.getByLabel("Password", { exact: true }).fill("Signup-test-password");
   let requests = 0;
   page.on("request", (r) => {

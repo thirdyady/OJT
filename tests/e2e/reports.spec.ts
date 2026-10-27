@@ -28,6 +28,13 @@ test.beforeAll(async () => {
       }),
     );
     users.push({ id: user.id, email, type, name });
+    if (type === "processing")
+      checked(
+        await local.admin
+          .from("processing_contracts")
+          .update({ start_date: "2001-02-01" })
+          .eq("user_id", user.id),
+      );
     if (type === "admin")
       checked(await local.admin.from("profiles").update({ is_admin: true }).eq("id", user.id));
     else {
@@ -56,7 +63,7 @@ test.afterAll(async () => {
 async function login(page: Page, type = "admin") {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(users.find((u) => u.type === type)!.email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(users.find((u) => u.type === type)!.email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
