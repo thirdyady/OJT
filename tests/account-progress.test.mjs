@@ -82,3 +82,24 @@ test("over-target progress remains visible without negative remaining credit", (
   assert.equal(p.percentage, 200);
   assert.equal(p.remaining, 0);
 });
+
+test("travel credits a single day without adding a progress target to JO or Regular accounts", () => {
+  const row = {
+    entry_date: "2026-10-27",
+    check_in: null,
+    break_out: null,
+    break_in: null,
+    check_out: null,
+    travel_hours: 10,
+    travel_place: "Bukidnon",
+    travel_reason: "Official visit",
+  };
+  assert.equal(completedWorkdays([row, row]), 1);
+  for (const account_type of ["job_order", "regular_employee"]) {
+    const value = accountProgress({ account_type }, [row]);
+    assert.equal(value.hours, 10);
+    assert.equal(value.days, 1);
+    assert.equal(value.percentage, null);
+  }
+  assert.equal(completedWorkdays([{ ...row, travel_hours: 9 }]), 0);
+});
