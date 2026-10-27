@@ -3,6 +3,8 @@ import { useServerFn } from "@tanstack/react-start";
 import { createTraineeAccount, type CreatedTraineeProfile } from "@/lib/admin-account.functions";
 import { accountInput, type AccountInput } from "@/lib/account-input";
 
+import { accountLabels } from "@/lib/account-progress.mjs";
+
 const empty = {
   fullName: "",
   studentId: "",
@@ -144,10 +146,10 @@ export function CreateAccountForm({
             }}
             className="mt-1 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
           >
-            <option value="ojt">OJT</option>
-            <option value="job_order">JO</option>
-            <option value="processing">Processing</option>
-            <option value="regular_employee">Regular Employee</option>
+            <option value="ojt">{accountLabels.ojt}</option>
+            <option value="job_order">{accountLabels.job_order}</option>
+            <option value="processing">{accountLabels.processing}</option>
+            <option value="regular_employee">{accountLabels.regular_employee}</option>
           </select>
         </label>
         {field("fullName", "Full Name", { aria: "New account full name", maxLength: 200 })}

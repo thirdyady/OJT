@@ -1,3 +1,4 @@
+import { TravelDetails } from "./travel-out";
 import { useState } from "react";
 import { CalendarDays, Check, Clock3, CircleAlert, Minus } from "lucide-react";
 import { attendanceDate, ATTENDANCE_TIME_ZONE } from "@/lib/dtr-time";
@@ -81,6 +82,7 @@ export function AttendanceCalendar({
       )
     )
       return "review";
+    if (row.travel_hours != null) return calculateCompletedHours(row) > 0 ? "complete" : "review";
     if (row.check_out) return calculateCompletedHours(row) > 0 ? "complete" : "review";
     return date === today && row.check_in ? "ongoing" : "incomplete";
   };
@@ -171,6 +173,7 @@ export function AttendanceCalendar({
             </h4>
             {row ? (
               <>
+                <TravelDetails row={row} />
                 <dl className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {(
                     [

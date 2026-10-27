@@ -1,5 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { networkInterfaces } from "node:os";
+
+const lan = process.argv.includes("--lan");
 
 // Explicit opt-in to the NEW hosted test project. Never resolves the old .env target.
 const project = "ojaffohibrltrzrbjcsd";
@@ -41,9 +44,30 @@ if (!publicKey || !serverKey) throw new Error("Project credentials are unavailab
 const url = `https://${project}.supabase.co`;
 console.log(`HOSTED TEST DATABASE: ${project}. Actions here change the NEW hosted database.`);
 console.log("Open http://localhost:3001. Use npm run local:dev for isolated local testing.");
+if (lan) {
+  console.log("LAN testing enabled. Keep this development server on a trusted network.");
+  for (const addresses of Object.values(networkInterfaces())) {
+    for (const address of addresses ?? []) {
+      if (address.family === "IPv4" && !address.internal) {
+        console.log(`Network address: http://${address.address}:3001`);
+      }
+    }
+  }
+  console.log(
+    "Use HTTPS staging for full recovery/Chief testing; HTTP LAN is not a secure browser context.",
+  );
+}
 const child = spawn(
   process.execPath,
-  ["node_modules/vite/bin/vite.js", "dev", "--host", "localhost", "--port", "3001", "--strictPort"],
+  [
+    "node_modules/vite/bin/vite.js",
+    "dev",
+    "--host",
+    lan ? "0.0.0.0" : "localhost",
+    "--port",
+    "3001",
+    "--strictPort",
+  ],
   {
     cwd: root,
     stdio: "inherit",

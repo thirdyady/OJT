@@ -28,6 +28,17 @@ export function containsPrivilegedKey(text) {
   return false;
 }
 
+// Short numeric test passwords must match a complete numeric sequence. A
+// substring of a hex fixture or a numeric alphabet is not that credential.
+// Non-numeric/long secrets retain substring detection, as do privileged keys.
+export function containsKnownSecret(text, secret) {
+  if (!secret) return false;
+  if (/^\d{1,11}$/.test(secret)) {
+    return new RegExp(`(?<![0-9])${secret}(?![0-9])`).test(text);
+  }
+  return text.includes(secret);
+}
+
 export function validateProductionEnv(env) {
   const issues = [];
   for (const key of [
@@ -113,6 +124,8 @@ function check() {
   }
 
   const git = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], { encoding: "utf8" });
+  if (git.error)
+    throw new Error("Git safety checks could not run. Check process permissions before building.");
   if (git.status === 0) {
     const tracked = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
       .split("\0")
@@ -126,9 +139,34 @@ function check() {
           encoding: "utf8",
           maxBuffer: 20 * 1024 * 1024,
         });
-        if (containsPrivilegedKey(staged) || secrets.some((secret) => staged.includes(secret)))
+        if (
+          containsPrivilegedKey(staged) ||
+          secrets.some((secret) => containsKnownSecret(staged, secret))
+        )
           failures.push(`Credential detected in staged file: ${path}`);
       }
+    }
+    // Also inspect the actual release source, including new untracked files.
+    // Index-only checks would miss a secret introduced after staging.
+    const working = execFileSync(
+      "git",
+      ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+      { encoding: "utf8" },
+    )
+      .split("\0")
+      .filter(Boolean);
+    for (const path of new Set(working)) {
+      if (
+        !existsSync(path) ||
+        !/\.(?:[cm]?[jt]sx?|json|sql|md|toml|ya?ml|env|example)$|(^|\/)\.env/.test(path)
+      )
+        continue;
+      const contents = readFileSync(path, "utf8");
+      if (
+        containsPrivilegedKey(contents) ||
+        secrets.some((secret) => containsKnownSecret(contents, secret))
+      )
+        failures.push(`Credential detected in working file: ${path}`);
     }
   } else if (process.env.GITHUB_ACTIONS === "true") {
     failures.push("Git tracking must be available in the CI safety check.");
@@ -162,7 +200,7 @@ function check() {
         failures.push(`Local-only file in deployable files: ${path}`);
       if (
         containsPrivilegedKey(contents) ||
-        [...secrets, ...localEmails].some((secret) => contents.includes(secret))
+        [...secrets, ...localEmails].some((secret) => containsKnownSecret(contents, secret))
       )
         failures.push(`Credential/test-account data found in deployable files: ${path}`);
     }

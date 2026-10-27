@@ -1,5 +1,6 @@
 import {
   accountProgress,
+  currentProcessingContract,
   accountLabels,
   type ProgressProfile,
   type DatedAttendance,
@@ -57,6 +58,10 @@ export function AccountProgressSummary({
 }) {
   const progress = accountProgress(profile, records);
   const ojt = profile.account_type === "ojt";
+  const contract =
+    profile.account_type === "processing"
+      ? currentProcessingContract(profile.processing_contracts ?? [])
+      : null;
   const title = progress.unit
     ? `${accountLabels[profile.account_type]} progress`
     : "Attendance summary";
@@ -190,8 +195,12 @@ export function AccountProgressSummary({
             ))}
           </dl>
           <p className="mt-4 text-xs leading-relaxed text-slate-500">
-            Uses this account&apos;s complete attendance history. Incomplete or invalid records
-            receive no credit.
+            {ojt
+              ? "Uses this account's complete attendance history."
+              : contract
+                ? `Contract: ${contract.start_date === "0001-01-01" ? "Existing history" : contract.start_date} to ${contract.end_date ?? "renewal"}.`
+                : "No started contract is configured."}{" "}
+            Incomplete or invalid records receive no credit.
           </p>
           {progress.target === null && (
             <p className="mt-3 text-sm text-slate-700">

@@ -415,7 +415,7 @@ export function AdminReports({
                           <td className="whitespace-nowrap border-b border-slate-100 px-4 py-4 tabular-nums text-slate-600 group-last:border-b-0">
                             {r.unit
                               ? r.required === null
-                                ? "Not configured"
+                                ? "See contract periods"
                                 : r.required + " " + r.unit
                               : "—"}
                           </td>
@@ -427,8 +427,9 @@ export function AdminReports({
               </div>
             )}
             <p className="mt-4 text-xs leading-relaxed text-slate-500">
-              Totals reflect the selected period. Requirements are overall targets for OJT and
-              Processing; JO and Regular Employee have no progress target. Generate again to include
+              Totals reflect the selected period. Requirements are overall targets for{" "}
+              {accountLabels.ojt} and {accountLabels.processing}; {accountLabels.job_order} and{" "}
+              {accountLabels.regular_employee} have no progress target. Generate again to include
               recent changes.
             </p>
           </div>

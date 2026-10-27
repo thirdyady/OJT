@@ -135,6 +135,16 @@ export function ChiefApproval({
             <dd>{prepared.account.position || "Not provided"}</dd>
           </dl>
         )}
+        {request.operation === "edit_dtr" && request.payload.values.travel_hours != null && (
+          <div className="rounded-lg bg-blue-50 p-3 text-sm">
+            <p>
+              Travel correction: {request.payload.date}, {request.payload.values.travel_hours} hours
+            </p>
+            <p>Place: {request.payload.values.travel_place}</p>
+            <p>Travel reason: {request.payload.values.travel_reason}</p>
+            <p>Correction reason: {request.payload.reason}</p>
+          </div>
+        )}
         {request.operation === "delete_account" && (
           <p className="text-sm text-red-700">
             Permanent deletion cannot be undone. Accounts with historical records must be
@@ -255,12 +265,14 @@ function localTime(stamp: string | null) {
 }
 export function DtrEditor({
   userId,
+  allowTravel = false,
   rows,
   initial,
   onClose,
   onSaved,
 }: {
   userId: string;
+  allowTravel?: boolean;
   rows: EditableDtr[];
   initial?: EditableDtr;
   onClose: () => void;
@@ -275,12 +287,20 @@ export function DtrEditor({
         string
       >,
   );
+  const [travel, setTravel] = useState(initial?.travel_hours != null);
+  const [travelHours, setTravelHours] = useState(String(initial?.travel_hours ?? 8));
+  const [travelPlace, setTravelPlace] = useState(initial?.travel_place ?? "");
+  const [travelReason, setTravelReason] = useState(initial?.travel_reason ?? "");
   const [reason, setReason] = useState("");
   const [request, setRequest] = useState<ChiefRequest | null>(null);
   const [error, setError] = useState("");
   const selectDate = (value: string) => {
     setDate(value);
     const row = rows.find((r) => r.entry_date === value);
+    setTravel(row?.travel_hours != null);
+    setTravelHours(String(row?.travel_hours ?? 8));
+    setTravelPlace(row?.travel_place ?? "");
+    setTravelReason(row?.travel_reason ?? "");
     setValues(
       Object.fromEntries(fields.map((f) => [f, localTime(row?.[f] ?? null)])) as typeof values,
     );
@@ -290,14 +310,20 @@ export function DtrEditor({
       setError("Select a date and enter a correction reason of at least 3 characters.");
       return;
     }
+    if (travel && (!travelPlace.trim() || travelPlace.trim().length > 15 || !travelReason.trim())) {
+      setError("Enter a travel place and reason.");
+      return;
+    }
     const stamps = Object.fromEntries(
       fields.map((f) => [
         f,
-        values[f] === localTime(original?.[f] ?? null)
-          ? (original?.[f] ?? null)
-          : values[f]
-            ? new Date(`${date}T${values[f]}+08:00`).toISOString()
-            : null,
+        travel
+          ? null
+          : values[f] === localTime(original?.[f] ?? null)
+            ? (original?.[f] ?? null)
+            : values[f]
+              ? new Date(`${date}T${values[f]}+08:00`).toISOString()
+              : null,
       ]),
     ) as PunchValues;
     setRequest({
@@ -310,10 +336,18 @@ export function DtrEditor({
         expected: original?.id
           ? {
               id: original.id,
+              travel_hours: original.travel_hours ?? null,
+              travel_place: original.travel_place ?? null,
+              travel_reason: original.travel_reason ?? null,
               ...(Object.fromEntries(fields.map((f) => [f, original[f]])) as PunchValues),
             }
           : null,
-        values: stamps,
+        values: {
+          ...stamps,
+          travel_hours: travel ? Number(travelHours) : null,
+          travel_place: travel ? travelPlace.trim() : null,
+          travel_reason: travel ? travelReason.trim() : null,
+        },
       },
     });
   };
@@ -352,22 +386,75 @@ export function DtrEditor({
             onChange={(e) => selectDate(e.target.value)}
           />
         </label>
-        {fields.map((f) => (
-          <label key={f}>
-            {labels[f]}
-            <span className="block text-xs">
-              Original: {localTime(original?.[f] ?? null) || "Not recorded"}
-            </span>
-            <input
-              type="time"
-              aria-label={labels[f]}
-              step="1"
+        {allowTravel && (
+          <label>
+            Attendance type
+            <select
+              aria-label="Attendance type"
               className={inputClass}
-              value={values[f]}
-              onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
-            />
+              value={travel ? "travel" : "punches"}
+              onChange={(e) => setTravel(e.target.value === "travel")}
+            >
+              <option value="punches">Normal punches</option>
+              <option value="travel">Travel</option>
+            </select>
           </label>
-        ))}
+        )}
+        {travel && (
+          <div className="space-y-3">
+            <label className="block">
+              Travel hours
+              <select
+                aria-label="Travel hours"
+                className={inputClass}
+                value={travelHours}
+                onChange={(e) => setTravelHours(e.target.value)}
+              >
+                <option value="8">8 hours</option>
+                <option value="10">10 hours</option>
+              </select>
+            </label>
+            <label className="block">
+              Place of travel
+              <input
+                className={inputClass}
+                maxLength={15}
+                value={travelPlace}
+                onChange={(e) => setTravelPlace(e.target.value)}
+              />
+            </label>
+            <label className="block">
+              Reason for travel
+              <textarea
+                className={inputClass}
+                maxLength={1000}
+                value={travelReason}
+                onChange={(e) => setTravelReason(e.target.value)}
+              />
+            </label>
+            <p className="text-xs">
+              Original travel: {original?.travel_hours ?? "None"} hours; {original?.travel_place};{" "}
+              {original?.travel_reason}
+            </p>
+          </div>
+        )}
+        {!travel &&
+          fields.map((f) => (
+            <label key={f}>
+              {labels[f]}
+              <span className="block text-xs">
+                Original: {localTime(original?.[f] ?? null) || "Not recorded"}
+              </span>
+              <input
+                type="time"
+                aria-label={labels[f]}
+                step="1"
+                className={inputClass}
+                value={values[f]}
+                onChange={(e) => setValues((v) => ({ ...v, [f]: e.target.value }))}
+              />
+            </label>
+          ))}
         <label>
           Correction reason
           <textarea
