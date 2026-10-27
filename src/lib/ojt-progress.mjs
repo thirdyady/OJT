@@ -6,6 +6,18 @@ const HOUR_IN_MS = 3_600_000;
  * be calculated safely.
  */
 export function calculateCompletedHours(record) {
+  if (record?.travel_hours != null) {
+    return [8, 10].includes(record.travel_hours) &&
+      record.travel_place?.trim() &&
+      record.travel_place.trim().length <= 15 &&
+      record.travel_reason?.trim() &&
+      !record.check_in &&
+      !record.break_out &&
+      !record.break_in &&
+      !record.check_out
+      ? record.travel_hours
+      : 0;
+  }
   if (!record?.check_in || !record?.check_out) return 0;
 
   const checkIn = Date.parse(record.check_in);

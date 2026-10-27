@@ -1,5 +1,5 @@
 ﻿import type { Tables, Enums } from "../integrations/supabase/types";
-import type { DatedAttendance } from "./account-progress.mjs";
+import type { DatedAttendance, ProcessingContract } from "./account-progress.mjs";
 export type ReportProfile = Pick<
   Tables<"profiles">,
   | "id"
@@ -10,7 +10,7 @@ export type ReportProfile = Pick<
   | "is_admin"
   | "required_ojt_hours"
   | "required_workdays"
->;
+> & { processing_contracts?: ProcessingContract[] };
 export type ReportRow = DatedAttendance & { user_id: string; id?: string };
 export type ReportType = Enums<"account_type"> | "all";
 export type ReportStatus = "all" | "active" | "inactive";
@@ -40,6 +40,11 @@ export function reportCsvCell(value: unknown): string;
 export function summaryReportCsv(report: AccountReport[], from: string, to: string): string;
 export function detailReportCsv(report: AccountReport[]): string;
 export function roleReportText(
-  profile: Pick<ReportProfile, "account_type" | "required_ojt_hours" | "required_workdays">,
+  profile: Pick<
+    ReportProfile,
+    "account_type" | "required_ojt_hours" | "required_workdays" | "processing_contracts"
+  >,
   records: DatedAttendance[],
+  from?: string,
+  to?: string,
 ): string;

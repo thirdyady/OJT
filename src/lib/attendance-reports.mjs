@@ -16,6 +16,13 @@ export function reportAccounts(profiles, type = "all", status = "all") {
       (status === "all" || p.is_active === (status === "active")),
   );
 }
+export function processingReportTarget(profile, from, to) {
+  if (!profile.processing_contracts) return profile.required_workdays;
+  const periods = profile.processing_contracts.filter(
+    (c) => c.start_date <= to && (!c.end_date || c.end_date >= from),
+  );
+  return periods.length === 1 ? periods[0].required_workdays : null;
+}
 export function buildAttendanceReport(profiles, records, from, to, type = "all", status = "all") {
   if (!validDateRange(from, to))
     throw new Error("Select a valid date range with the start on or before the end.");
@@ -33,7 +40,7 @@ export function buildAttendanceReport(profiles, records, from, to, type = "all",
       profile.account_type === "ojt"
         ? profile.required_ojt_hours
         : profile.account_type === "processing"
-          ? profile.required_workdays
+          ? processingReportTarget(profile, from, to)
           : null;
     return {
       profile,
@@ -82,7 +89,13 @@ export function summaryReportCsv(report, from, to) {
       r.hours.toFixed(2),
       r.days,
       ...(hoursTarget ? [r.unit === "hours" ? (r.required ?? "Not configured") : ""] : []),
-      ...(daysTarget ? [r.unit === "days" ? (r.required ?? "Not configured") : ""] : []),
+      ...(daysTarget
+        ? [
+            r.unit === "days"
+              ? (r.required ?? "See contract periods (none or multiple in range)")
+              : "",
+          ]
+        : []),
     ]),
   ]);
 }
@@ -107,6 +120,7 @@ export function detailReportCsv(report) {
       "Break In",
       "Check Out",
       "Credited hours",
+      "Remarks",
     ],
     ...report.flatMap((r) =>
       r.rows.map((row) => [
@@ -119,15 +133,27 @@ export function detailReportCsv(report) {
         time(row.break_in),
         time(row.check_out),
         calculateCompletedHours(row).toFixed(2),
+        row.travel_hours != null ? "Travel" : "",
       ]),
     ),
   ]);
 }
-export function roleReportText(profile, records) {
+export function roleReportText(profile, records, from, to) {
   const hours = calculateCompletedHoursFromRecords(records).toFixed(2);
   if (profile.account_type === "ojt")
     return `Credited hours (selected period): ${hours} hrs | Required hours: ${profile.required_ojt_hours ?? "Not configured"}`;
   if (profile.account_type === "processing")
-    return `Completed valid workdays (selected period): ${completedWorkdays(records)} | Required days: ${profile.required_workdays ?? "Not configured"}`;
+    return `Completed valid workdays (selected period): ${completedWorkdays(records)} | Required days: ${
+      processingReportTarget(
+        profile,
+        from ?? records.map((r) => r.entry_date).sort()[0] ?? "",
+        to ??
+          records
+            .map((r) => r.entry_date)
+            .sort()
+            .at(-1) ??
+          "9999-12-31",
+      ) ?? "See contract periods (none or multiple in range)"
+    }`;
   return "";
 }

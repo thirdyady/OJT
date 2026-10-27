@@ -1,7 +1,20 @@
 ﻿import { z } from "zod";
 const stamp = z.string().datetime({ offset: true }).nullable();
 export const punchValues = z
-  .object({ check_in: stamp, break_out: stamp, break_in: stamp, check_out: stamp })
+  .object({
+    check_in: stamp,
+    break_out: stamp,
+    break_in: stamp,
+    check_out: stamp,
+    travel_hours: z
+      .number()
+      .int()
+      .refine((v): boolean => v === 8 || v === 10)
+      .nullable()
+      .optional(),
+    travel_place: z.string().trim().min(1).max(15).nullable().optional(),
+    travel_reason: z.string().trim().min(1).max(1000).nullable().optional(),
+  })
   .strict();
 const targetUserId = z.string().uuid();
 export const chiefRequestInput = z.discriminatedUnion("operation", [

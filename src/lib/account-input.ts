@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { accountLabels } from "./account-progress.mjs";
 
 // Shared by the form and trusted provisioning boundary. No privileged imports.
 export const accountInput = z
@@ -18,18 +19,22 @@ export const accountInput = z
     const reject = (path: string, message: string) =>
       ctx.addIssue({ code: "custom", path: [path], message });
     if (data.accountType === "ojt") {
-      if (!data.studentId) reject("studentId", "Student ID is required for OJT accounts.");
+      if (!data.studentId)
+        reject("studentId", `Student ID is required for ${accountLabels.ojt} accounts.`);
     } else {
       if (data.studentId !== null)
-        reject("studentId", "Student ID is only applicable to OJT accounts.");
+        reject("studentId", `Student ID is only applicable to ${accountLabels.ojt} accounts.`);
       if (data.requiredOjtHours !== null)
-        reject("requiredOjtHours", "Only OJT accounts have an hour target.");
+        reject("requiredOjtHours", `Only ${accountLabels.ojt} accounts have an hour target.`);
     }
     if (data.accountType === "processing") {
       if (data.requiredWorkdays === null)
-        reject("requiredWorkdays", "Processing requires a positive whole-day target.");
+        reject(
+          "requiredWorkdays",
+          `${accountLabels.processing} requires a positive whole-day target.`,
+        );
     } else if (data.requiredWorkdays !== null) {
-      reject("requiredWorkdays", "Only Processing accounts have a day target.");
+      reject("requiredWorkdays", `Only ${accountLabels.processing} accounts have a day target.`);
     }
   });
 

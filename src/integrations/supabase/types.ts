@@ -3,6 +3,49 @@ export type Json = string | number | boolean | null | { [key: string]: Json | un
 export type Database = {
   public: {
     Tables: {
+      processing_contracts: {
+        Row: {
+          id: string;
+          user_id: string;
+          start_date: string;
+          end_date: string | null;
+          required_workdays: number;
+          revision: number;
+          created_at: string;
+        };
+        Insert: {
+          user_id: string;
+          start_date: string;
+          required_workdays: number;
+          end_date?: string | null;
+        };
+        Update: { start_date?: string; end_date?: string | null; required_workdays?: number };
+        Relationships: [
+          {
+            foreignKeyName: "processing_contracts_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "profiles";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
+      processing_contract_audit: {
+        Row: {
+          id: string;
+          user_id: string;
+          actor_id: string;
+          request_id: string;
+          request_values: Json;
+          old_values: Json;
+          new_values: Json;
+          reason: string;
+          created_at: string;
+        };
+        Insert: never;
+        Update: never;
+        Relationships: [];
+      };
       dtr_admin_audit: {
         Row: {
           action: string;
@@ -60,6 +103,9 @@ export type Database = {
           break_out: string | null;
           check_in: string | null;
           check_out: string | null;
+          travel_hours?: number | null;
+          travel_place?: string | null;
+          travel_reason?: string | null;
           created_at: string;
           entry_date: string;
           id: string;
@@ -71,6 +117,9 @@ export type Database = {
           break_out?: string | null;
           check_in?: string | null;
           check_out?: string | null;
+          travel_hours?: number | null;
+          travel_place?: string | null;
+          travel_reason?: string | null;
           created_at?: string;
           entry_date: string;
           id?: string;
@@ -82,6 +131,9 @@ export type Database = {
           break_out?: string | null;
           check_in?: string | null;
           check_out?: string | null;
+          travel_hours?: number | null;
+          travel_place?: string | null;
+          travel_reason?: string | null;
           created_at?: string;
           entry_date?: string;
           id?: string;
@@ -140,6 +192,40 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      dtr_save_processing_contract: {
+        Args: {
+          target_user_id: string;
+          contract_id: string | null;
+          expected_revision: number;
+          starts: string;
+          ends: string | null;
+          days: number;
+          correction_reason: string;
+          operation_id: string;
+          expected_latest_id: string;
+        };
+        Returns: undefined;
+      };
+      dtr_travel_out: {
+        Args: { expected_date: string; hours: number; place: string; reason: string };
+        Returns: Database["public"]["Tables"]["dtr_entries"]["Row"];
+      };
+      dtr_is_security_monitor: { Args: Record<PropertyKey, never>; Returns: boolean };
+      dtr_security_logs: {
+        Args: { log_date: string; after_id?: string };
+        Returns: {
+          id: string;
+          full_name: string;
+          account_type: Database["public"]["Enums"]["account_type"];
+          check_in: string | null;
+          break_out: string | null;
+          break_in: string | null;
+          check_out: string | null;
+          travel_hours?: number | null;
+          travel_place?: string | null;
+          travel_reason?: string | null;
+        }[];
+      };
       dtr_admin_set_account_active: {
         Args: { target_active: boolean; target_user_id: string };
         Returns: {
@@ -237,6 +323,7 @@ export type Database = {
       };
       dtr_is_active: { Args: never; Returns: boolean };
       dtr_is_admin: { Args: never; Returns: boolean };
+      dtr_admin_can_view_profile: { Args: { target_user_id: string }; Returns: boolean };
       dtr_punch: {
         Args: {
           action: string;
@@ -253,6 +340,9 @@ export type Database = {
           break_out: string | null;
           check_in: string | null;
           check_out: string | null;
+          travel_hours?: number | null;
+          travel_place?: string | null;
+          travel_reason?: string | null;
           created_at: string;
           entry_date: string;
           id: string;

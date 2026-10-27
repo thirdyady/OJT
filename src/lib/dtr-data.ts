@@ -23,7 +23,9 @@ export async function loadDtrRows(userId: string) {
   const rows = await allPages((after) => {
     let query = supabase
       .from("dtr_entries")
-      .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
+      .select(
+        "id, user_id, entry_date, check_in, break_out, break_in, check_out, travel_hours, travel_place, travel_reason",
+      )
       .eq("user_id", userId)
       .order("id")
       .limit(500);
@@ -38,7 +40,7 @@ export async function loadProfiles(accountType?: Enums<"account_type">) {
     let query = supabase
       .from("profiles")
       .select(
-        "id, full_name, student_id, company, ojt_title, account_type, required_ojt_hours, required_workdays, is_admin, is_active, updated_at",
+        "id, full_name, student_id, company, ojt_title, account_type, required_ojt_hours, required_workdays, is_admin, is_active, updated_at, processing_contracts(*)",
       )
       .order("id")
       .limit(500);
@@ -53,7 +55,9 @@ export async function loadReportDtrRows(from: string, to: string) {
   return allPages((after) => {
     let query = supabase
       .from("dtr_entries")
-      .select("id, user_id, entry_date, check_in, break_out, break_in, check_out")
+      .select(
+        "id, user_id, entry_date, check_in, break_out, break_in, check_out, travel_hours, travel_place, travel_reason",
+      )
       .gte("entry_date", from)
       .lte("entry_date", to)
       .order("id")

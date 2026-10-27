@@ -7,6 +7,7 @@ import { accountInput, type AccountInput } from "./account-input";
 export type CreateTraineeAccountInput = AccountInput;
 
 export type CreatedTraineeProfile = {
+  processing_contracts?: import("./account-progress.mjs").ProcessingContract[];
   account_type: Enums<"account_type">;
   required_workdays: number | null;
   updated_at: string;

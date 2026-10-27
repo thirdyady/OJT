@@ -49,7 +49,7 @@ export async function provisionTrainee(
         is_active: true,
       })
       .select(
-        "id, full_name, student_id, company, ojt_title, account_type, required_ojt_hours, required_workdays, is_admin, is_active, updated_at",
+        "id, full_name, student_id, company, ojt_title, account_type, required_ojt_hours, required_workdays, is_admin, is_active, updated_at, processing_contracts(*)",
       )
       .single();
 
