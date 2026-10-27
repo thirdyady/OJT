@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   forbiddenPath,
   containsPrivilegedKey,
+  containsKnownSecret,
   validateProductionEnv,
 } from "../scripts/check-deployment.mjs";
 
@@ -20,6 +21,15 @@ const valid = {
   SUPABASE_PUBLISHABLE_KEY: jwt("anon"),
   SUPABASE_SERVICE_ROLE_KEY: jwt("service_role"),
 };
+
+test("short numeric credentials are detected without matching part of a longer digit sequence", () => {
+  const secret = "3456789";
+  for (const text of [`password='${secret}'`, `prefix${secret}suffix`, `{"password":"${secret}"}`])
+    assert.equal(containsKnownSecret(text, secret), true);
+  assert.equal(containsKnownSecret("abcdef0123456789abcdef0123456789", secret), false);
+  assert.equal(containsKnownSecret("prefix-Test-password-suffix", "Test-password"), true);
+  assert.equal(containsKnownSecret("prefix0123456789012345suffix", "123456789012"), true);
+});
 
 test("the executable guard rejects force-staged account files and copies in public output", () => {
   const temporaryRoot = resolve(tmpdir());
@@ -63,6 +73,40 @@ test("local account copies, env files, and test artifacts are forbidden; templat
     "supabase/migrations/20260921000000_attendance_integrity.sql",
   ])
     assert.equal(forbiddenPath(path), false, path);
+});
+
+test("executable guard checks new source, modified working files and the index independently", () => {
+  const temporaryRoot = resolve(tmpdir());
+  const directory = mkdtempSync(join(temporaryRoot, "dtr-deployment-check-"));
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [fileURLToPath(new URL("../scripts/check-deployment.mjs", import.meta.url))],
+      { cwd: directory, encoding: "utf8" },
+    );
+  try {
+    execFileSync("git", ["init", "--quiet", directory]);
+    writeFileSync(join(directory, ".gitignore"), ".local-test-accounts.json\n");
+    const password = "local-fixture-" + "credential";
+    writeFileSync(
+      join(directory, ".local-test-accounts.json"),
+      JSON.stringify({ test: { password } }),
+    );
+    writeFileSync(join(directory, "source.ts"), "export const safe = true;");
+    assert.equal(run().status, 0);
+    writeFileSync(join(directory, "source.ts"), `export const password = '${password}';`);
+    assert.match(run().stderr, /Credential detected in working file/);
+    execFileSync("git", ["-C", directory, "add", "source.ts"]);
+    writeFileSync(join(directory, "source.ts"), "export const safe = true;");
+    assert.match(run().stderr, /Credential detected in staged file/);
+    execFileSync("git", ["-C", directory, "add", "source.ts"]);
+    writeFileSync(join(directory, "source.ts"), `export const password = '${password}';`);
+    assert.match(run().stderr, /Credential detected in working file/);
+  } finally {
+    assert.equal(dirname(resolve(directory)), temporaryRoot);
+    assert.ok(basename(directory).startsWith("dtr-deployment-check-"));
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("privileged keys are identified without confusing public keys or code references", () => {
