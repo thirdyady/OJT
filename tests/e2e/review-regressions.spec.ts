@@ -58,7 +58,7 @@ test.afterAll(async () => {
 async function login(page: Page, index: number) {
   await page.goto("/auth");
   await page.locator('body[data-app-hydrated="true"]').waitFor();
-  await page.getByLabel("Email", { exact: true }).fill(users[index].email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(users[index].email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
@@ -208,10 +208,9 @@ test("clearing a break keeps admin, trainee, CSV and progress hours consistent",
   await login(page, 1);
   await page.getByLabel("Select month to view/download").selectOption("0");
   await page.getByLabel("Select year to view/download").selectOption("2000");
-  await expect(page.getByRole("progressbar", { name: "OJT completion" })).toHaveAttribute(
-    "aria-valuenow",
-    "87.5",
-  );
+  await expect(
+    page.getByRole("progressbar", { name: "OJT/Immersions completion" }),
+  ).toHaveAttribute("aria-valuenow", "87.5");
   const downloadEvent = page.waitForEvent("download");
   await page.getByRole("button", { name: "Export CSV", exact: true }).click();
   const download = await downloadEvent;

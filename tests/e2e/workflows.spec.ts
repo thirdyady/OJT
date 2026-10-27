@@ -84,15 +84,15 @@ test("attendance persists, failed writes stay unsaved, undo is unavailable, admi
   await page.goto("/dashboard");
   await waitForHydration(page);
   await expect(page).toHaveURL(/\/auth$/);
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeVisible();
   await expect(page.getByAltText("Philippine Statistics Authority")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Manage Accounts" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "OJT progress" })).toBeVisible();
-  await expect(page.getByRole("progressbar", { name: "OJT completion" })).toBeVisible();
-  await expect(page.getByText("OJT target reached!")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "OJT/Immersions progress" })).toBeVisible();
+  await expect(page.getByRole("progressbar", { name: "OJT/Immersions completion" })).toBeVisible();
+  await expect(page.getByText("OJT/Immersions target reached!")).toBeVisible();
   await page.getByLabel("Student ID", { exact: true }).fill(updatedStudentId);
   await page.route("**/rest/v1/profiles*", async (route) => {
     if (route.request().method() === "PATCH") await route.abort("failed");
@@ -135,7 +135,7 @@ test("attendance persists, failed writes stay unsaved, undo is unavailable, admi
   await page.getByRole("button", { name: "Export CSV" }).click();
   expect((await download).suggestedFilename()).toMatch(/\.csv$/);
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await page.getByLabel("Email", { exact: true }).fill(adminEmail);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(adminEmail);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "PSA Attendance · Admin" })).toBeVisible();
@@ -187,7 +187,7 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
   const createdStudentId = `SERVER-CREATED-${randomUUID()}`;
   await page.goto("/auth");
   await waitForHydration(page);
-  await page.getByLabel("Email", { exact: true }).fill(adminEmail);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(adminEmail);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Create account" })).toBeVisible();
@@ -237,7 +237,7 @@ test("admin creates a complete trainee account while a trainee cannot invoke the
   await createdSession.auth.signOut();
 
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Manage Accounts" })).toHaveCount(0);
@@ -294,7 +294,7 @@ test("an already-signed-in trainee loses DTR access after deactivation and retur
 }) => {
   await page.goto("/auth");
   await waitForHydration(page);
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   const nextPunch = page.getByRole("button", {
@@ -323,7 +323,7 @@ test("an already-signed-in trainee loses DTR access after deactivation and retur
   );
   await adminSession.auth.signOut();
 
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(
@@ -338,7 +338,7 @@ test("forgot password requests a recovery email; recovery updates the password; 
   await waitForHydration(page);
   await page.getByRole("button", { name: "Forgot password?" }).click();
   await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
-  await page.getByLabel("Email", { exact: true }).fill(email);
+  await page.getByLabel(/^Email(?: or username)?$/).fill(email);
   let recoveryRequestBody: Record<string, unknown> | undefined;
   let recoveryRequestUrl = "";
   page.on("request", (request) => {
@@ -419,7 +419,7 @@ test("signed-in change password keeps the session and rejects an invalid recover
 
     await page.goto("/auth");
     await waitForHydration(page);
-    await page.getByLabel("Email", { exact: true }).fill(changeEmail);
+    await page.getByLabel(/^Email(?: or username)?$/).fill(changeEmail);
     await page.getByLabel("Password", { exact: true }).fill(changePassword);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("button", { name: /now$/ }).first()).toBeVisible();
@@ -539,7 +539,7 @@ test("new trainee registration requires complete profile details", async ({ page
     await page.getByLabel("Student ID", { exact: true }).fill("BROWSER-SIGNUP");
     await page.getByLabel("Host company", { exact: true }).fill("PSA (browser signup)");
     await page.getByLabel("Position / Role", { exact: true }).fill("Statistics Intern");
-    await page.getByLabel("Email", { exact: true }).fill(signupEmail);
+    await page.getByLabel(/^Email(?: or username)?$/).fill(signupEmail);
     await page.getByLabel("Password", { exact: true }).fill(`Signup!${randomUUID()}`);
     await page.getByRole("button", { name: "Create account", exact: true }).click();
     await expect(page.getByText(/Account created/)).toBeVisible();
@@ -591,7 +591,7 @@ test("legacy incomplete profiles can be completed without losing DTR access", as
     );
     await page.goto("/auth");
     await waitForHydration(page);
-    await page.getByLabel("Email", { exact: true }).fill(legacyEmail);
+    await page.getByLabel(/^Email(?: or username)?$/).fill(legacyEmail);
     await page.getByLabel("Password", { exact: true }).fill(legacyPassword);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("button", { name: "Check In now", exact: true })).toBeVisible();

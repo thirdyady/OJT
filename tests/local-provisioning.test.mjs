@@ -34,6 +34,9 @@ for (const type of ["ojt", "job_order", "processing", "regular_employee"]) {
       assert.equal(row.student_id, data.studentId);
       assert.equal(row.ojt_title, data.ojtTitle);
       assert.equal(row.is_admin, false);
+      assert.equal(result.profile.processing_contracts.length, type === "processing" ? 1 : 0);
+      if (type === "processing")
+        assert.equal(result.profile.processing_contracts[0].required_workdays, 90);
       assert.equal(checked(await client.auth.signInWithPassword(data)).user.id, id);
       await assert.rejects(provisionTrainee(local.admin, data), /Account was not created/);
       assert.equal(checked(await local.admin.auth.admin.getUserById(id)).user.id, id);
